@@ -47,6 +47,8 @@ export interface CalendarEvent {
   reference?: string
   /** true once an admin manually edited this event (protected on regenerate) */
   edited?: boolean
+  /** Which promotion this event belongs to. Undefined = birthday (global, always shown). */
+  promotionId?: string
 }
 
 export interface Todo {
@@ -67,10 +69,15 @@ export interface Meeting {
   createdAt: string
 }
 
-export interface Settings {
-  promotionName: string
-  /** ISO date yyyy-mm-dd */
+export interface Promotion {
+  id: string
+  name: string
+  /** ISO date yyyy-mm-dd — schedule starts on the first Friday on/after this date */
   scheduleStartDate: string
+}
+
+export interface Settings {
+  promotions: Promotion[]
 }
 
 export interface AppData {

@@ -192,9 +192,9 @@ const baseStudents: Student[] = [
 
 /* ── BUILDER ──────────────────────────────────────────────────────────────── */
 
-export function buildSeed(startDate: string): AppData {
+export function buildSeed(): AppData {
   const data: AppData = {
-    settings: { promotionName: "Promotion BCC Ghana 2026–2027", scheduleStartDate: startDate },
+    settings: { promotions: [{ id: "promo-default", name: "Promotion BCC Ghana 2026–2027", scheduleStartDate: "2026-09-04" }] },
     classes: baseClasses,
     lessons: baseLessons,
     students: baseStudents,

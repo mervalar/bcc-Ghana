@@ -6,9 +6,8 @@ import type {
   CalendarEvent,
   ImportPayload,
   Meeting,
-  Settings,
+  Promotion,
   Student,
-  Todo,
 } from "./types"
 import { generateSchedule } from "./scheduler"
 import { buildSeed } from "./seed"
@@ -19,14 +18,13 @@ function uid(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 9)}${Date.now().toString(36).slice(-4)}`
 }
 
-function defaultStartDate(): string {
-  // First Friday of September 2026
-  return "2026-09-04"
+function defaultPromotion(): Promotion {
+  return { id: "promo-default", name: "Promotion 2026–2027", scheduleStartDate: "2026-09-04" }
 }
 
 function emptyData(): AppData {
   return {
-    settings: { promotionName: "Promotion 2026–2027", scheduleStartDate: defaultStartDate() },
+    settings: { promotions: [defaultPromotion()] },
     students: [],
     classes: [],
     lessons: [],
@@ -36,11 +34,38 @@ function emptyData(): AppData {
   }
 }
 
+/** Migrate localStorage data from old single-promotion format to multi-promotion format. */
+function migrate(raw: unknown): AppData {
+  const parsed = raw as AppData & {
+    settings: AppData["settings"] & { promotionName?: string; scheduleStartDate?: string }
+  }
+  const base = { ...emptyData(), ...parsed }
+
+  // Old format had settings.promotionName — convert to promotions array
+  const s = parsed.settings as { promotionName?: string; scheduleStartDate?: string; promotions?: Promotion[] }
+  if (!s.promotions) {
+    const legacyPromo: Promotion = {
+      id: "promo-default",
+      name: s.promotionName ?? "Promotion 2026–2027",
+      scheduleStartDate: s.scheduleStartDate ?? "2026-09-04",
+    }
+    base.settings = { promotions: [legacyPromo] }
+    // Tag existing non-birthday events with the default promotionId
+    base.events = (parsed.events ?? []).map((e) =>
+      e.type === "birthday" || e.promotionId ? e : { ...e, promotionId: "promo-default" },
+    )
+  }
+
+  return base
+}
+
 interface StoreValue {
   data: AppData
   ready: boolean
-  // settings
-  updateSettings: (next: Partial<Settings>) => void
+  // promotions
+  addPromotion: (p: Omit<Promotion, "id">) => string
+  updatePromotion: (id: string, next: Partial<Promotion>) => void
+  deletePromotion: (id: string) => void
   regenerate: () => void
   // students
   addStudent: (s: Omit<Student, "id">) => void
@@ -71,13 +96,12 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false)
   const hydrated = useRef(false)
 
-  // hydrate from localStorage
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY)
       if (raw) {
-        const parsed = JSON.parse(raw) as AppData
-        setData({ ...emptyData(), ...parsed })
+        const parsed = JSON.parse(raw)
+        setData(migrate(parsed))
       }
     } catch {
       // ignore
@@ -86,7 +110,6 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     setReady(true)
   }, [])
 
-  // persist on change (after hydration)
   useEffect(() => {
     if (!hydrated.current) return
     try {
@@ -96,7 +119,6 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     }
   }, [data])
 
-  /** Apply a mutation and regenerate the calendar from the new state. */
   const mutateAndRegenerate = useCallback((producer: (prev: AppData) => AppData) => {
     setData((prev) => {
       const next = producer(prev)
@@ -104,9 +126,39 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     })
   }, [])
 
-  const updateSettings = useCallback(
-    (next: Partial<Settings>) => {
-      mutateAndRegenerate((prev) => ({ ...prev, settings: { ...prev.settings, ...next } }))
+  /* ── Promotions ── */
+
+  const addPromotion = useCallback(
+    (p: Omit<Promotion, "id">) => {
+      const id = uid("promo")
+      mutateAndRegenerate((prev) => ({
+        ...prev,
+        settings: { promotions: [...prev.settings.promotions, { ...p, id }] },
+      }))
+      return id
+    },
+    [mutateAndRegenerate],
+  )
+
+  const updatePromotion = useCallback(
+    (id: string, next: Partial<Promotion>) => {
+      mutateAndRegenerate((prev) => ({
+        ...prev,
+        settings: {
+          promotions: prev.settings.promotions.map((p) => (p.id === id ? { ...p, ...next } : p)),
+        },
+      }))
+    },
+    [mutateAndRegenerate],
+  )
+
+  const deletePromotion = useCallback(
+    (id: string) => {
+      mutateAndRegenerate((prev) => ({
+        ...prev,
+        settings: { promotions: prev.settings.promotions.filter((p) => p.id !== id) },
+        events: prev.events.filter((e) => e.promotionId !== id),
+      }))
     },
     [mutateAndRegenerate],
   )
@@ -114,6 +166,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const regenerate = useCallback(() => {
     setData((prev) => ({ ...prev, events: generateSchedule(prev) }))
   }, [])
+
+  /* ── Students ── */
 
   const addStudent = useCallback(
     (s: Omit<Student, "id">) => {
@@ -145,13 +199,16 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     [mutateAndRegenerate],
   )
 
-  // Event edits are manual overrides; don't regenerate (would wipe them).
+  /* ── Events ── */
+
   const updateEvent = useCallback((id: string, next: Partial<CalendarEvent>) => {
     setData((prev) => ({
       ...prev,
       events: prev.events.map((e) => (e.id === id ? { ...e, ...next, edited: true } : e)),
     }))
   }, [])
+
+  /* ── Meetings ── */
 
   const addMeeting = useCallback((m: Omit<Meeting, "id" | "createdAt">) => {
     const id = uid("mt")
@@ -176,6 +233,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       todos: prev.todos.filter((t) => t.meetingId !== id),
     }))
   }, [])
+
+  /* ── Todos ── */
 
   const addTodo = useCallback((text: string, meetingId?: string) => {
     setData((prev) => ({
@@ -204,6 +263,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const deleteTodo = useCallback((id: string) => {
     setData((prev) => ({ ...prev, todos: prev.todos.filter((t) => t.id !== id) }))
   }, [])
+
+  /* ── Data management ── */
 
   const importData = useCallback(
     (payload: ImportPayload) => {
@@ -237,7 +298,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const exportData = useCallback(() => data, [data])
 
   const loadSeed = useCallback(() => {
-    setData((prev) => buildSeed(prev.settings.scheduleStartDate))
+    setData(buildSeed())
   }, [])
 
   const resetAll = useCallback(() => {
@@ -248,7 +309,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     () => ({
       data,
       ready,
-      updateSettings,
+      addPromotion,
+      updatePromotion,
+      deletePromotion,
       regenerate,
       addStudent,
       updateStudent,
@@ -267,25 +330,13 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       resetAll,
     }),
     [
-      data,
-      ready,
-      updateSettings,
-      regenerate,
-      addStudent,
-      updateStudent,
-      deleteStudent,
+      data, ready,
+      addPromotion, updatePromotion, deletePromotion, regenerate,
+      addStudent, updateStudent, deleteStudent,
       updateEvent,
-      addMeeting,
-      updateMeeting,
-      deleteMeeting,
-      addTodo,
-      toggleTodo,
-      updateTodo,
-      deleteTodo,
-      importData,
-      exportData,
-      loadSeed,
-      resetAll,
+      addMeeting, updateMeeting, deleteMeeting,
+      addTodo, toggleTodo, updateTodo, deleteTodo,
+      importData, exportData, loadSeed, resetAll,
     ],
   )
 

@@ -21,6 +21,7 @@ import {
 
 const NAV = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/calendar", label: "Calendar", icon: CalendarDays },
   { href: "/students", label: "Students", icon: Users },
   { href: "/meetings", label: "Minutes & Meetings", icon: NotebookPen },
   { href: "/settings", label: "Settings & Import", icon: Settings },
@@ -52,7 +53,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold text-sidebar-foreground">Bible Study</p>
-          <p className="truncate text-xs text-muted-foreground">Promotion 2026–27</p>
+          <p className="truncate text-xs text-muted-foreground">Bible Study Manager</p>
         </div>
       </div>
 
