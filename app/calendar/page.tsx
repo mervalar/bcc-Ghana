@@ -116,7 +116,7 @@ export default function CalendarPage() {
               <p className="mt-0.5 text-sm text-muted-foreground">Academic schedule</p>
             </div>
             {data.settings.promotions.length > 0 && (
-              <Select value={promoId} onValueChange={setPromoId}>
+              <Select value={promoId} onValueChange={(v) => setPromoId(v ?? "all")}>
                 <SelectTrigger className="w-auto min-w-44" size="sm">
                   <SelectValue placeholder="Filter by promotion" />
                 </SelectTrigger>

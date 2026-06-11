@@ -32,6 +32,7 @@ const EMPTY: Draft = {
   phone: "",
   birthday: "",
   classId: null,
+  promotionId: null,
   status: "active",
   notes: "",
 }
@@ -39,7 +40,7 @@ const EMPTY: Draft = {
 interface Props {
   open: boolean
   onOpenChange: (open: boolean) => void
-  student: Student | null // null = create
+  student: Student | null
 }
 
 export function StudentFormDialog({ open, onOpenChange, student }: Props) {
@@ -47,21 +48,16 @@ export function StudentFormDialog({ open, onOpenChange, student }: Props) {
   const [draft, setDraft] = useState<Draft>(EMPTY)
 
   useEffect(() => {
-    if (open) {
-      setDraft(student ? { ...student } : EMPTY)
-    }
+    if (open) setDraft(student ? { ...student } : EMPTY)
   }, [open, student])
 
   const set = <K extends keyof Draft>(key: K, value: Draft[K]) =>
     setDraft((d) => ({ ...d, [key]: value }))
 
-  const submit = (e: React.FormEvent) => {
+  const submit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    if (student) {
-      updateStudent(student.id, draft)
-    } else {
-      addStudent(draft)
-    }
+    if (student) updateStudent(student.id, draft)
+    else addStudent(draft)
     onOpenChange(false)
   }
 
@@ -72,7 +68,7 @@ export function StudentFormDialog({ open, onOpenChange, student }: Props) {
           <DialogHeader>
             <DialogTitle>{student ? "Edit student" : "Add student"}</DialogTitle>
             <DialogDescription>
-              {student ? "Update this student's information." : "Add a new student to the promotion."}
+              {student ? "Update this student's information." : "Add a new student to a promotion."}
             </DialogDescription>
           </DialogHeader>
 
@@ -106,24 +102,21 @@ export function StudentFormDialog({ open, onOpenChange, student }: Props) {
 
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-2">
-                <Label htmlFor="class">Class</Label>
+                <Label htmlFor="promotion">Promotion</Label>
                 <Select
-                  value={draft.classId ?? "none"}
-                  onValueChange={(v) => set("classId", v === "none" ? null : v)}
+                  value={draft.promotionId ?? "none"}
+                  onValueChange={(v) => set("promotionId", v === "none" ? null : v)}
                 >
-                  <SelectTrigger id="class">
-                    <SelectValue placeholder="Select class" />
+                  <SelectTrigger id="promotion">
+                    <SelectValue placeholder="Select promotion" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">Unassigned</SelectItem>
-                    {data.classes
-                      .slice()
-                      .sort((a, b) => a.order - b.order)
-                      .map((c) => (
-                        <SelectItem key={c.id} value={c.id}>
-                          {c.name}
-                        </SelectItem>
-                      ))}
+                    {data.settings.promotions.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.name}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -148,9 +141,7 @@ export function StudentFormDialog({ open, onOpenChange, student }: Props) {
           </div>
 
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
             <Button type="submit">{student ? "Save changes" : "Add student"}</Button>
           </DialogFooter>
         </form>

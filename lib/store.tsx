@@ -84,6 +84,7 @@ interface StoreValue {
   deleteTodo: (id: string) => void
   // data management
   importData: (payload: ImportPayload) => { students: number; classes: number; lessons: number }
+  importStudentsForPromotion: (promoId: string, students: ImportPayload["students"]) => number
   exportData: () => AppData
   loadSeed: () => void
   resetAll: () => void
@@ -281,6 +282,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
               phone: s.phone ?? "",
               birthday: s.birthday ?? "",
               classId: s.classId ?? null,
+              promotionId: s.promotionId ?? null,
               status: s.status ?? "active",
               notes: s.notes ?? "",
             }))
@@ -291,6 +293,29 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         return { ...prev, classes, lessons, students }
       })
       return counts
+    },
+    [mutateAndRegenerate],
+  )
+
+  const importStudentsForPromotion = useCallback(
+    (promoId: string, students: ImportPayload["students"]) => {
+      if (!students?.length) return 0
+      mutateAndRegenerate((prev) => {
+        const newStudents = students.map((s) => ({
+          id: s.id ?? uid("st"),
+          firstName: s.firstName ?? "",
+          lastName: s.lastName ?? "",
+          email: s.email ?? "",
+          phone: s.phone ?? "",
+          birthday: s.birthday ?? "",
+          classId: s.classId ?? null,
+          promotionId: promoId,
+          status: s.status ?? "active",
+          notes: s.notes ?? "",
+        }))
+        return { ...prev, students: [...prev.students, ...newStudents] }
+      })
+      return students.length
     },
     [mutateAndRegenerate],
   )
@@ -325,6 +350,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       updateTodo,
       deleteTodo,
       importData,
+      importStudentsForPromotion,
       exportData,
       loadSeed,
       resetAll,
@@ -336,7 +362,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       updateEvent,
       addMeeting, updateMeeting, deleteMeeting,
       addTodo, toggleTodo, updateTodo, deleteTodo,
-      importData, exportData, loadSeed, resetAll,
+      importData, importStudentsForPromotion, exportData, loadSeed, resetAll,
     ],
   )
 

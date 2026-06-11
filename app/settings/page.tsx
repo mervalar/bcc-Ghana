@@ -25,6 +25,7 @@ import {
   X,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { parseCSV } from "@/lib/csv"
 
 const SAMPLE: ImportPayload = {
   classes: [
@@ -97,12 +98,14 @@ function PromotionForm({
 /* ── Main page ── */
 
 export default function SettingsPage() {
-  const { data, addPromotion, updatePromotion, deletePromotion, regenerate, importData, exportData, resetAll, loadSeed } = useStore()
+  const { data, addPromotion, updatePromotion, deletePromotion, regenerate, importData, importStudentsForPromotion, exportData, resetAll, loadSeed } = useStore()
   const { username, changeCredentials } = useAuth()
-  const fileRef = useRef<HTMLInputElement>(null)
+  const fileRef    = useRef<HTMLInputElement>(null)
+  const promoFileRef = useRef<HTMLInputElement>(null)
 
-  const [addingPromo, setAddingPromo]   = useState(false)
-  const [editingId, setEditingId]       = useState<string | null>(null)
+  const [addingPromo, setAddingPromo]         = useState(false)
+  const [editingId, setEditingId]             = useState<string | null>(null)
+  const [importingPromoId, setImportingPromoId] = useState<string | null>(null)
 
   const [newUser, setNewUser] = useState(username)
   const [newPass, setNewPass] = useState("")
@@ -127,6 +130,39 @@ export default function SettingsPage() {
     if (!confirm(`Delete "${p.name}" and all its calendar events?`)) return
     deletePromotion(p.id)
     toast.success("Promotion deleted.")
+  }
+
+  const triggerPromoImport = (promoId: string) => {
+    setImportingPromoId(promoId)
+    promoFileRef.current?.click()
+  }
+
+  const onPromoFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file || !importingPromoId) return
+    try {
+      const text = await file.text()
+      const isCSV = file.name.toLowerCase().endsWith(".csv")
+      let students: ImportPayload["students"]
+
+      if (isCSV) {
+        students = parseCSV(text)
+        if (!students.length) throw new Error("No rows found in CSV.")
+      } else {
+        const parsed = JSON.parse(text)
+        students = Array.isArray(parsed) ? parsed : parsed.students
+        if (!Array.isArray(students)) throw new Error("Expected a students array.")
+      }
+
+      const count = importStudentsForPromotion(importingPromoId, students)
+      const promoName = data.settings.promotions.find((p) => p.id === importingPromoId)?.name ?? "promotion"
+      toast.success(`${count} student${count !== 1 ? "s" : ""} imported into "${promoName}".`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not read the file.")
+    } finally {
+      if (promoFileRef.current) promoFileRef.current.value = ""
+      setImportingPromoId(null)
+    }
   }
 
   const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -158,6 +194,9 @@ export default function SettingsPage() {
         title="Settings & Import"
         description="Manage promotions, import data, and configure admin access."
       />
+
+      {/* Hidden file input for per-promotion student import */}
+      <input ref={promoFileRef} type="file" accept="application/json,.json,.csv,text/csv" onChange={onPromoFile} className="hidden" />
 
       <div className="grid gap-6 p-6 lg:grid-cols-2">
 
@@ -193,16 +232,25 @@ export default function SettingsPage() {
                     onCancel={() => setEditingId(null)}
                   />
                 ) : (
-                  <div className={cn(
-                    "flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3",
-                  )}>
+                  <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3">
                     <div className="min-w-0">
                       <p className="font-medium text-foreground">{p.name}</p>
                       <p className="text-xs text-muted-foreground">
-                        Starts {p.scheduleStartDate}
+                        Starts {p.scheduleStartDate} ·{" "}
+                        <span className="font-medium text-foreground">
+                          {data.students.filter((s) => s.promotionId === p.id).length}
+                        </span>{" "}student(s)
                       </p>
                     </div>
                     <div className="flex shrink-0 items-center gap-1">
+                      <Button
+                        variant="outline" size="sm" className="gap-1.5 text-xs"
+                        onClick={() => triggerPromoImport(p.id)}
+                        aria-label="Import students into this promotion"
+                      >
+                        <Upload className="size-3" aria-hidden="true" />
+                        Import students
+                      </Button>
                       <Button
                         variant="ghost" size="icon" className="size-8"
                         onClick={() => { setEditingId(p.id); setAddingPromo(false) }}

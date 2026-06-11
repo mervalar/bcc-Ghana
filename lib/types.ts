@@ -9,6 +9,8 @@ export interface Student {
   /** ISO date yyyy-mm-dd */
   birthday: string
   classId: string | null
+  /** Which promotion this student belongs to */
+  promotionId: string | null
   status: StudentStatus
   notes: string
 }

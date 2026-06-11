@@ -2,10 +2,11 @@
 
 import { useMemo, useState } from "react"
 import { useStore } from "@/lib/store"
-import { eventsForDate, filterByPromotion, fromISO, summarize, toISO } from "@/lib/scheduler"
+import { filterByPromotion, fromISO, toISO } from "@/lib/scheduler"
 import { EVENT_META, MONTHS } from "@/lib/event-style"
 import { cn } from "@/lib/utils"
 import Link from "next/link"
+import type { CalendarEvent } from "@/lib/types"
 import {
   Select,
   SelectContent,
@@ -20,8 +21,21 @@ import {
   Megaphone,
   Users,
   ArrowRight,
+  CheckCircle2,
 } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
+
+/* ── helpers ── */
+
+function computeStats(events: CalendarEvent[], today: string) {
+  const lessonsTotal   = events.filter((e) => e.type === "lesson").length
+  const lessonsLeft    = events.filter((e) => e.type === "lesson"    && e.date >= today).length
+  const fellowshipsLeft = events.filter((e) => e.type === "fellowship" && e.date >= today).length
+  const crusadesLeft   = events.filter((e) => e.type === "crusade"   && e.date >= today).length
+  return { lessonsTotal, lessonsLeft, fellowshipsLeft, crusadesLeft }
+}
+
+/* ── page ── */
 
 export default function DashboardPage() {
   const { data, ready } = useStore()
@@ -29,36 +43,47 @@ export default function DashboardPage() {
 
   const today = toISO(new Date())
 
-  const filteredEvents = useMemo(
-    () => filterByPromotion(data.events, promoId),
-    [data.events, promoId],
-  )
+  /* Stats — per promotion when "all" */
+  const statsRows = useMemo(() => {
+    if (promoId !== "all") {
+      const promo = data.settings.promotions.find((p) => p.id === promoId)
+      const evs = filterByPromotion(data.events, promoId)
+      const students = data.students.filter((s) => s.promotionId === promoId).length
+      return [{ id: promoId, name: promo?.name ?? "Overview", students, ...computeStats(evs, today) }]
+    }
+    return data.settings.promotions.map((p) => {
+      const evs = data.events.filter((e) => e.promotionId === p.id)
+      const students = data.students.filter((s) => s.promotionId === p.id).length
+      return { id: p.id, name: p.name, students, ...computeStats(evs, today) }
+    })
+  }, [promoId, data.events, data.students, data.settings.promotions, today])
 
-  const stats = useMemo(() => summarize(filteredEvents), [filteredEvents])
-
+  /* Upcoming — next 14 days */
   const upcoming = useMemo(() => {
+    const evs = filterByPromotion(data.events, promoId)
     const todayDate = fromISO(today)
-    return filteredEvents
+    return evs
       .filter((e) => {
         const diff = (fromISO(e.date).getTime() - todayDate.getTime()) / 86400000
-        return diff >= 0 && diff <= 30
+        return diff >= 0 && diff <= 14
       })
       .sort((a, b) => a.date.localeCompare(b.date))
-      .slice(0, 20)
-  }, [filteredEvents, today])
+  }, [data.events, promoId, today])
 
-  const upcomingByDate = useMemo(() => {
-    const groups: { date: string; events: typeof upcoming }[] = []
-    for (const e of upcoming) {
-      const last = groups[groups.length - 1]
-      if (last && last.date === e.date) {
-        last.events.push(e)
-      } else {
-        groups.push({ date: e.date, events: [e] })
-      }
+  const upcomingSections = useMemo(() => {
+    if (promoId !== "all") {
+      const promo = data.settings.promotions.find((p) => p.id === promoId)
+      return [{ label: promo?.name ?? "Upcoming", events: upcoming }]
     }
-    return groups
-  }, [upcoming])
+    const sections: { label: string; events: CalendarEvent[] }[] = []
+    for (const promo of data.settings.promotions) {
+      const evs = upcoming.filter((e) => e.promotionId === promo.id)
+      if (evs.length > 0) sections.push({ label: promo.name, events: evs })
+    }
+    const birthdays = upcoming.filter((e) => !e.promotionId)
+    if (birthdays.length > 0) sections.push({ label: "Birthdays", events: birthdays })
+    return sections
+  }, [promoId, upcoming, data.settings.promotions])
 
   const selectedPromoName = useMemo(() => {
     if (promoId === "all") return "All promotions"
@@ -77,16 +102,14 @@ export default function DashboardPage() {
             <p className="mt-0.5 text-sm text-muted-foreground">{selectedPromoName}</p>
           </div>
           {data.settings.promotions.length > 0 && (
-            <Select value={promoId} onValueChange={setPromoId}>
+            <Select value={promoId} onValueChange={(v) => setPromoId(v ?? "all")}>
               <SelectTrigger className="w-auto min-w-44" size="sm">
                 <SelectValue placeholder="Filter by promotion" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All promotions</SelectItem>
                 {data.settings.promotions.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>
-                    {p.name}
-                  </SelectItem>
+                  <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -95,18 +118,41 @@ export default function DashboardPage() {
       </div>
 
       <div className="flex flex-col gap-6 p-6">
-        {/* Stats */}
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          <StatCard icon={Users}     label="Students"    value={data.students.length} />
-          <StatCard icon={BookOpen}  label="Lessons"     value={stats.lesson} />
-          <StatCard icon={HandHeart} label="Fellowships" value={stats.fellowship} />
-          <StatCard icon={Megaphone} label="Crusades"    value={stats.crusade} />
-        </div>
 
-        {/* Upcoming events */}
+        {/* ── Stats ── */}
+        {promoId !== "all" ? (
+          /* Single promotion — 4 cards */
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+            <StatCard icon={Users}     label="Students in promo" value={statsRows[0].students} />
+            <LessonStatCard total={statsRows[0].lessonsTotal} left={statsRows[0].lessonsLeft} />
+            <StatCard icon={HandHeart} label="Fellowships left"  value={statsRows[0].fellowshipsLeft} />
+            <StatCard icon={Megaphone} label="Crusades left"     value={statsRows[0].crusadesLeft} />
+          </div>
+        ) : (
+          /* All promotions — per-promo breakdown */
+          <div className="flex flex-col gap-3">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              {statsRows.map((row) => (
+                <div key={row.id} className="overflow-hidden rounded-xl border border-border bg-card">
+                  <div className="border-b border-border bg-muted/30 px-4 py-2.5">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-primary">{row.name}</p>
+                  </div>
+                  <div className="grid grid-cols-4 divide-x divide-border">
+                    <MiniStat icon={Users}     label="Students"         value={row.students} />
+                    <MiniStat icon={BookOpen}  label="Lessons left"     value={row.lessonsLeft} sub={`of ${row.lessonsTotal}`} />
+                    <MiniStat icon={HandHeart} label="Fellowships left" value={row.fellowshipsLeft} />
+                    <MiniStat icon={Megaphone} label="Crusades left"    value={row.crusadesLeft} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── Upcoming ── */}
         <div className="flex flex-col gap-3">
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-foreground">Upcoming — next 30 days</h2>
+            <h2 className="text-sm font-semibold text-foreground">Upcoming — next 14 days</h2>
             <Link
               href="/calendar"
               className="flex items-center gap-1 text-xs font-medium text-primary hover:underline"
@@ -116,68 +162,20 @@ export default function DashboardPage() {
             </Link>
           </div>
 
-          {upcomingByDate.length === 0 ? (
-            <div className="flex flex-col items-center gap-3 rounded-xl border border-border bg-card px-6 py-16 text-center">
+          {upcomingSections.length === 0 ? (
+            <div className="flex flex-col items-center gap-3 rounded-xl border border-border bg-card px-6 py-12 text-center">
               <CalendarDays className="size-8 text-muted-foreground/30" aria-hidden="true" />
               <p className="text-sm text-muted-foreground">
                 {data.events.length === 0
-                  ? "No schedule yet. Import classes & lessons from Settings."
-                  : "Nothing scheduled in the next 30 days."}
+                  ? "No schedule yet — import classes & lessons from Settings."
+                  : "Nothing scheduled in the next 14 days."}
               </p>
             </div>
           ) : (
-            <div className="flex flex-col gap-2">
-              {upcomingByDate.map(({ date, events: dayEvents }) => {
-                const [y, m, d] = date.split("-").map(Number)
-                const dateObj = new Date(y, m - 1, d)
-                const isToday = date === today
-                const weekday = dateObj.toLocaleDateString("en-US", { weekday: "short" })
-                const monthDay = `${MONTHS[m - 1].slice(0, 3)} ${d}`
-
-                return (
-                  <Link key={date} href={`/calendar?date=${date}`}>
-                    <div className="flex gap-4 rounded-xl border border-border bg-card px-5 py-4 transition-colors hover:bg-muted/40 cursor-pointer">
-                      {/* Date column */}
-                      <div className={cn(
-                        "flex w-14 shrink-0 flex-col items-center justify-center rounded-lg py-2 text-center",
-                        isToday ? "bg-primary text-primary-foreground" : "bg-muted/60",
-                      )}>
-                        <span className={cn("text-[11px] font-medium uppercase", isToday ? "text-primary-foreground/80" : "text-muted-foreground")}>
-                          {weekday}
-                        </span>
-                        <span className={cn("text-lg font-bold leading-tight", isToday ? "text-primary-foreground" : "text-foreground")}>
-                          {d}
-                        </span>
-                        <span className={cn("text-[11px]", isToday ? "text-primary-foreground/80" : "text-muted-foreground")}>
-                          {monthDay.split(" ")[0]}
-                        </span>
-                      </div>
-
-                      {/* Events column */}
-                      <div className="flex flex-1 flex-col justify-center gap-1.5 min-w-0">
-                        {dayEvents.map((e) => {
-                          const meta = EVENT_META[e.type]
-                          const Icon = meta.icon
-                          const label = e.type === "birthday"
-                            ? e.title.replace(/'s Birthday$/, "")
-                            : e.title
-                          return (
-                            <div key={e.id} className="flex items-center gap-2">
-                              <span className={cn("flex size-5 shrink-0 items-center justify-center rounded", meta.chip.split(" ").filter(c => c.startsWith("bg-") || c.startsWith("text-")).join(" "))}>
-                                <Icon className="size-3" aria-hidden="true" />
-                              </span>
-                              <span className="truncate text-sm text-foreground">{label}</span>
-                              <span className={cn("ml-auto shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium", meta.chip)}>
-                                {meta.label}
-                              </span>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  </Link>
-                )
-              })}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              {upcomingSections.map((section) => (
+                <UpcomingCard key={section.label} label={section.label} events={section.events} today={today} />
+              ))}
             </div>
           )}
         </div>
@@ -186,9 +184,11 @@ export default function DashboardPage() {
   )
 }
 
-function StatCard({ icon: Icon, label, value }: { icon: LucideIcon; label: string; value: number }) {
+/* ── Stat cards ── */
+
+function StatCard({ icon: Icon, label, value, wide }: { icon: LucideIcon; label: string; value: number; wide?: boolean }) {
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-border bg-card p-4">
+    <div className={cn("flex items-center gap-3 rounded-xl border border-border bg-card p-4", wide && "sm:col-span-4")}>
       <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
         <Icon className="size-5" aria-hidden="true" />
       </div>
@@ -196,6 +196,96 @@ function StatCard({ icon: Icon, label, value }: { icon: LucideIcon; label: strin
         <p className="text-2xl font-semibold leading-none text-foreground">{value}</p>
         <p className="mt-1 truncate text-xs text-muted-foreground">{label}</p>
       </div>
+    </div>
+  )
+}
+
+function LessonStatCard({ total, left }: { total: number; left: number }) {
+  const done = total - left
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0
+  return (
+    <div className="flex flex-col justify-between gap-2 rounded-xl border border-border bg-card p-4">
+      <div className="flex items-center gap-3">
+        <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+          <BookOpen className="size-5" aria-hidden="true" />
+        </div>
+        <div className="min-w-0">
+          <p className="text-2xl font-semibold leading-none text-foreground">{left}</p>
+          <p className="mt-1 truncate text-xs text-muted-foreground">Lessons left</p>
+        </div>
+      </div>
+      {total > 0 && (
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center justify-between">
+            <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+              <CheckCircle2 className="size-3 text-emerald-500" aria-hidden="true" />
+              {done} done
+            </span>
+            <span className="text-[10px] text-muted-foreground">{pct}%</span>
+          </div>
+          <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
+            <div className="h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function MiniStat({ icon: Icon, label, value, sub }: { icon: LucideIcon; label: string; value: number; sub?: string }) {
+  return (
+    <div className="flex flex-col items-center gap-1 px-3 py-3 text-center">
+      <Icon className="size-4 text-primary" aria-hidden="true" />
+      <p className="text-lg font-semibold leading-none text-foreground">{value}</p>
+      {sub && <p className="text-[9px] text-muted-foreground">{sub}</p>}
+      <p className="text-[10px] text-muted-foreground leading-tight">{label}</p>
+    </div>
+  )
+}
+
+/* ── Upcoming card ── */
+
+function UpcomingCard({ label, events, today }: { label: string; events: CalendarEvent[]; today: string }) {
+  return (
+    <div className="overflow-hidden rounded-xl border border-border bg-card">
+      <div className="flex items-center justify-between border-b border-border bg-muted/30 px-4 py-2.5">
+        <span className="text-xs font-semibold uppercase tracking-wide text-primary">{label}</span>
+        <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
+          {events.length} event{events.length !== 1 ? "s" : ""}
+        </span>
+      </div>
+      <ul className="divide-y divide-border">
+        {events.map((e) => {
+          const meta  = EVENT_META[e.type]
+          const Icon  = meta.icon
+          const [, m, d] = e.date.split("-").map(Number)
+          const isToday = e.date === today
+          const title = e.type === "birthday" ? e.title.replace(/'s Birthday$/, "") : e.title
+
+          return (
+            <li key={e.id}>
+              <Link
+                href={`/calendar?date=${e.date}`}
+                className="flex items-center gap-3 px-4 py-2 transition-colors hover:bg-muted/40"
+              >
+                <span className={cn(
+                  "w-11 shrink-0 rounded-md px-1.5 py-0.5 text-center text-[10px] font-semibold leading-tight",
+                  isToday ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground",
+                )}>
+                  {isToday ? "Today" : `${MONTHS[m - 1].slice(0, 3)} ${d}`}
+                </span>
+                <span className={cn(
+                  "flex size-5 shrink-0 items-center justify-center rounded",
+                  meta.chip.split(" ").filter((c) => c.startsWith("bg-") || c.startsWith("text-")).join(" "),
+                )}>
+                  <Icon className="size-3" aria-hidden="true" />
+                </span>
+                <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">{title}</span>
+              </Link>
+            </li>
+          )
+        })}
+      </ul>
     </div>
   )
 }

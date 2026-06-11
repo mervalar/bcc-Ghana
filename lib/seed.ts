@@ -197,7 +197,7 @@ export function buildSeed(): AppData {
     settings: { promotions: [{ id: "promo-default", name: "Promotion BCC Ghana 2026–2027", scheduleStartDate: "2026-09-04" }] },
     classes: baseClasses,
     lessons: baseLessons,
-    students: baseStudents,
+    students: baseStudents.map((s) => ({ ...s, promotionId: "promo-default" })),
     events: [],
     meetings: [],
     todos: [],
