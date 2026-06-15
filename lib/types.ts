@@ -51,6 +51,8 @@ export interface CalendarEvent {
   edited?: boolean
   /** Which promotion this event belongs to. Undefined = birthday (global, always shown). */
   promotionId?: string
+  /** Lesson completion status set by the admin */
+  status?: "done" | "postponed"
 }
 
 export interface Todo {

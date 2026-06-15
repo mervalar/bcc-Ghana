@@ -6,7 +6,9 @@ import { filterByPromotion, fromISO, toISO } from "@/lib/scheduler"
 import { EVENT_META, MONTHS } from "@/lib/event-style"
 import { cn } from "@/lib/utils"
 import Link from "next/link"
+import { Button } from "@/components/ui/button"
 import type { CalendarEvent } from "@/lib/types"
+import { promoColorByIndex, getPromoColor } from "@/lib/promo-colors"
 import {
   Select,
   SelectContent,
@@ -22,24 +24,29 @@ import {
   Users,
   ArrowRight,
   CheckCircle2,
+  FileText,
 } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
+import { ReportDialog } from "@/components/dashboard/report-dialog"
 
 /* ── helpers ── */
 
 function computeStats(events: CalendarEvent[], today: string) {
-  const lessonsTotal   = events.filter((e) => e.type === "lesson").length
-  const lessonsLeft    = events.filter((e) => e.type === "lesson"    && e.date >= today).length
+  const allLessons     = events.filter((e) => e.type === "lesson")
+  const lessonsTotal   = allLessons.length
+  const lessonsDone    = allLessons.filter((e) => e.status === "done").length
+  const lessonsLeft    = lessonsTotal - lessonsDone
   const fellowshipsLeft = events.filter((e) => e.type === "fellowship" && e.date >= today).length
   const crusadesLeft   = events.filter((e) => e.type === "crusade"   && e.date >= today).length
-  return { lessonsTotal, lessonsLeft, fellowshipsLeft, crusadesLeft }
+  return { lessonsTotal, lessonsDone, lessonsLeft, fellowshipsLeft, crusadesLeft }
 }
 
 /* ── page ── */
 
 export default function DashboardPage() {
   const { data, ready } = useStore()
-  const [promoId, setPromoId] = useState("all")
+  const [promoId, setPromoId]       = useState("all")
+  const [reportOpen, setReportOpen] = useState(false)
 
   const today = toISO(new Date())
 
@@ -49,12 +56,13 @@ export default function DashboardPage() {
       const promo = data.settings.promotions.find((p) => p.id === promoId)
       const evs = filterByPromotion(data.events, promoId)
       const students = data.students.filter((s) => s.promotionId === promoId).length
-      return [{ id: promoId, name: promo?.name ?? "Overview", students, ...computeStats(evs, today) }]
+      const color = getPromoColor(promoId, data.settings.promotions)
+      return [{ id: promoId, name: promo?.name ?? "Overview", students, color, ...computeStats(evs, today) }]
     }
-    return data.settings.promotions.map((p) => {
+    return data.settings.promotions.map((p, i) => {
       const evs = data.events.filter((e) => e.promotionId === p.id)
       const students = data.students.filter((s) => s.promotionId === p.id).length
-      return { id: p.id, name: p.name, students, ...computeStats(evs, today) }
+      return { id: p.id, name: p.name, students, color: promoColorByIndex(i), ...computeStats(evs, today) }
     })
   }, [promoId, data.events, data.students, data.settings.promotions, today])
 
@@ -73,15 +81,16 @@ export default function DashboardPage() {
   const upcomingSections = useMemo(() => {
     if (promoId !== "all") {
       const promo = data.settings.promotions.find((p) => p.id === promoId)
-      return [{ label: promo?.name ?? "Upcoming", events: upcoming }]
+      const color = getPromoColor(promoId, data.settings.promotions)
+      return [{ label: promo?.name ?? "Upcoming", events: upcoming, color }]
     }
-    const sections: { label: string; events: CalendarEvent[] }[] = []
-    for (const promo of data.settings.promotions) {
+    const sections: { label: string; events: CalendarEvent[]; color: ReturnType<typeof promoColorByIndex> }[] = []
+    data.settings.promotions.forEach((promo, i) => {
       const evs = upcoming.filter((e) => e.promotionId === promo.id)
-      if (evs.length > 0) sections.push({ label: promo.name, events: evs })
-    }
+      if (evs.length > 0) sections.push({ label: promo.name, events: evs, color: promoColorByIndex(i) })
+    })
     const birthdays = upcoming.filter((e) => !e.promotionId)
-    if (birthdays.length > 0) sections.push({ label: "Birthdays", events: birthdays })
+    if (birthdays.length > 0) sections.push({ label: "Birthdays", events: birthdays, color: promoColorByIndex(5) })
     return sections
   }, [promoId, upcoming, data.settings.promotions])
 
@@ -101,19 +110,25 @@ export default function DashboardPage() {
             <h1 className="text-lg font-semibold text-foreground">Dashboard</h1>
             <p className="mt-0.5 text-sm text-muted-foreground">{selectedPromoName}</p>
           </div>
-          {data.settings.promotions.length > 0 && (
-            <Select value={promoId} onValueChange={(v) => setPromoId(v ?? "all")}>
-              <SelectTrigger className="w-auto min-w-44" size="sm">
-                <SelectValue placeholder="Filter by promotion" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All promotions</SelectItem>
-                {data.settings.promotions.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" className="gap-2" onClick={() => setReportOpen(true)}>
+              <FileText className="size-4" aria-hidden="true" />
+              Report
+            </Button>
+            {data.settings.promotions.length > 0 && (
+              <Select value={promoId} onValueChange={(v) => setPromoId(v ?? "all")}>
+                <SelectTrigger className="w-auto min-w-44" size="sm">
+                  <SelectValue placeholder="Filter by promotion" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All promotions</SelectItem>
+                  {data.settings.promotions.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </div>
         </div>
       </div>
 
@@ -124,18 +139,18 @@ export default function DashboardPage() {
           /* Single promotion — 4 cards */
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
             <StatCard icon={Users}     label="Students in promo" value={statsRows[0].students} />
-            <LessonStatCard total={statsRows[0].lessonsTotal} left={statsRows[0].lessonsLeft} />
+            <LessonStatCard total={statsRows[0].lessonsTotal} left={statsRows[0].lessonsLeft} done={statsRows[0].lessonsDone} />
             <StatCard icon={HandHeart} label="Fellowships left"  value={statsRows[0].fellowshipsLeft} />
             <StatCard icon={Megaphone} label="Crusades left"     value={statsRows[0].crusadesLeft} />
           </div>
         ) : (
           /* All promotions — per-promo breakdown */
           <div className="flex flex-col gap-3">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className={cn("grid gap-4", statsRows.length > 1 ? "sm:grid-cols-2" : "grid-cols-1")}>
               {statsRows.map((row) => (
                 <div key={row.id} className="overflow-hidden rounded-xl border border-border bg-card">
                   <div className="border-b border-border bg-muted/30 px-4 py-2.5">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-primary">{row.name}</p>
+                    <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: row.color.textDark }}>{row.name}</p>
                   </div>
                   <div className="grid grid-cols-4 divide-x divide-border">
                     <MiniStat icon={Users}     label="Students"         value={row.students} />
@@ -172,14 +187,16 @@ export default function DashboardPage() {
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className={cn("grid gap-4", upcomingSections.length > 1 ? "sm:grid-cols-2" : "grid-cols-1")}>
               {upcomingSections.map((section) => (
-                <UpcomingCard key={section.label} label={section.label} events={section.events} today={today} />
+                <UpcomingCard key={section.label} label={section.label} events={section.events} today={today} color={section.color} />
               ))}
             </div>
           )}
         </div>
       </div>
+
+      <ReportDialog open={reportOpen} onOpenChange={setReportOpen} data={data} />
     </div>
   )
 }
@@ -200,8 +217,7 @@ function StatCard({ icon: Icon, label, value, wide }: { icon: LucideIcon; label:
   )
 }
 
-function LessonStatCard({ total, left }: { total: number; left: number }) {
-  const done = total - left
+function LessonStatCard({ total, left, done }: { total: number; left: number; done: number }) {
   const pct = total > 0 ? Math.round((done / total) * 100) : 0
   return (
     <div className="flex flex-col justify-between gap-2 rounded-xl border border-border bg-card p-4">
@@ -245,12 +261,12 @@ function MiniStat({ icon: Icon, label, value, sub }: { icon: LucideIcon; label: 
 
 /* ── Upcoming card ── */
 
-function UpcomingCard({ label, events, today }: { label: string; events: CalendarEvent[]; today: string }) {
+function UpcomingCard({ label, events, today, color }: { label: string; events: CalendarEvent[]; today: string; color: ReturnType<typeof promoColorByIndex> }) {
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-card">
       <div className="flex items-center justify-between border-b border-border bg-muted/30 px-4 py-2.5">
-        <span className="text-xs font-semibold uppercase tracking-wide text-primary">{label}</span>
-        <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
+        <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: color.textDark }}>{label}</span>
+        <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
           {events.length} event{events.length !== 1 ? "s" : ""}
         </span>
       </div>

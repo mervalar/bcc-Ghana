@@ -3,14 +3,11 @@
 import { useEffect, useState } from "react"
 import type { CalendarEvent } from "@/lib/types"
 import { useStore } from "@/lib/store"
-import { EVENT_META, formatLongDate } from "@/lib/event-style"
+import { EVENT_META, formatLongDate, MONTHS } from "@/lib/event-style"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
-import { Badge } from "@/components/ui/badge"
 import { toast } from "sonner"
-import { Save, X } from "lucide-react"
+import { CalendarCheck, CalendarClock, X } from "lucide-react"
+import { fromISO } from "@/lib/scheduler"
 
 interface Props {
   date: string | null
@@ -19,12 +16,11 @@ interface Props {
 }
 
 export function EventPanel({ date, events, onClose }: Props) {
-  const { updateEvent } = useStore()
+  const { markLessonDone, postponeLesson } = useStore()
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
   const selected = events.find((e) => e.id === selectedId) ?? null
 
-  // auto-select first event when the day changes
   useEffect(() => {
     setSelectedId(events.length ? events[0].id : null)
   }, [date, events])
@@ -66,75 +62,114 @@ export function EventPanel({ date, events, onClose }: Props) {
                 >
                   <Icon className="size-3.5" aria-hidden="true" />
                   {meta.label}
+                  {e.status === "done" && <span className="ml-0.5 text-emerald-600">✓</span>}
+                  {e.status === "postponed" && <span className="ml-0.5 text-amber-500">→</span>}
                 </button>
               )
             })}
           </div>
 
-          {selected && <EventEditor key={selected.id} event={selected} onSave={(p) => {
-            updateEvent(selected.id, p)
-            toast.success("Event updated.")
-          }} />}
+          {selected && (
+            <EventDetail
+              key={selected.id}
+              event={selected}
+              onDone={selected.type === "lesson" ? () => {
+                markLessonDone(selected.id)
+                toast.success("Lesson marked as done.")
+              } : undefined}
+              onPostpone={selected.type === "lesson" && selected.promotionId ? () => {
+                postponeLesson(selected.id)
+                toast.success("Lesson postponed — all following events shifted.")
+              } : undefined}
+            />
+          )}
         </div>
       )}
     </div>
   )
 }
 
-function EventEditor({
+function EventDetail({
   event,
-  onSave,
+  onDone,
+  onPostpone,
 }: {
   event: CalendarEvent
-  onSave: (patch: Partial<CalendarEvent>) => void
+  onDone?: () => void
+  onPostpone?: () => void
 }) {
-  const meta = EVENT_META[event.type]
-  const [title, setTitle] = useState(event.title)
-  const [description, setDescription] = useState(event.description)
-  const [reference, setReference] = useState(event.reference ?? "")
+  const isDone      = event.status === "done"
+  const isPostponed = event.status === "postponed"
 
-  const isLesson = event.type === "lesson"
+  const d = fromISO(event.date)
+  const formattedDate = `${MONTHS[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`
 
   return (
-    <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-5">
-      <div className="flex items-center gap-2">
-        <Badge variant="secondary" className={meta.badge}>
-          {meta.label}
-        </Badge>
-        {event.edited && (
-          <span className="text-xs text-muted-foreground">edited</span>
-        )}
-      </div>
+    <div className="flex flex-1 flex-col overflow-y-auto">
 
-      <div className="flex flex-col gap-2">
-        <Label htmlFor="ev-title">Title</Label>
-        <Input id="ev-title" value={title} onChange={(e) => setTitle(e.target.value)} />
-      </div>
-
-      {isLesson && (
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="ev-ref">Scripture reference</Label>
-          <Input id="ev-ref" value={reference} onChange={(e) => setReference(e.target.value)} />
+      {/* Status badges — only shown when done/postponed */}
+      {(isDone || isPostponed) && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-3">
+          {isDone && (
+            <span className="flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-medium text-emerald-700">
+              <CalendarCheck className="size-3" aria-hidden="true" />Done
+            </span>
+          )}
+          {isPostponed && (
+            <span className="flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-0.5 text-[11px] font-medium text-amber-700">
+              <CalendarClock className="size-3" aria-hidden="true" />Postponed
+            </span>
+          )}
         </div>
       )}
 
-      <div className="flex flex-col gap-2">
-        <Label htmlFor="ev-desc">Description</Label>
-        <Textarea
-          id="ev-desc"
-          rows={5}
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-        />
+      {/* Content rows */}
+      <div className="flex flex-1 flex-col divide-y divide-border">
+        <DetailRow label="Date" value={formattedDate} />
+        <DetailRow label="Title" value={event.title} />
+        {event.description && (
+          <DetailRow label="Description" value={event.description} multiline />
+        )}
       </div>
 
-      <Button
-        className="mt-auto gap-2 self-start"
-        onClick={() => onSave({ title, description, reference: isLesson ? reference : undefined })}
-      >
-        <Save className="size-4" aria-hidden="true" />
-        Save changes
-      </Button>
+      {/* Action buttons — lessons only, pinned to bottom */}
+      {(onDone || onPostpone) && (
+        <div className="flex gap-2 border-t border-border px-5 py-4">
+          {onDone && (
+            <Button
+              size="sm"
+              variant="outline"
+              className={isDone
+                ? "gap-1.5 border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                : "gap-1.5 border-emerald-200 text-emerald-700 hover:bg-emerald-50"}
+              onClick={onDone}
+            >
+              <CalendarCheck className="size-3.5" aria-hidden="true" />
+              {isDone ? "Done ✓" : "Mark done"}
+            </Button>
+          )}
+          {onPostpone && !isDone && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5 border-amber-200 text-amber-700 hover:bg-amber-50"
+              onClick={onPostpone}
+            >
+              <CalendarClock className="size-3.5" aria-hidden="true" />
+              Postpone
+            </Button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function DetailRow({ label, value, multiline }: { label: string; value: string; multiline?: boolean }) {
+  return (
+    <div className="flex flex-col gap-1 px-5 py-4">
+      <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</span>
+      <span className={`text-sm text-foreground ${multiline ? "whitespace-pre-wrap leading-relaxed" : "font-medium"}`}>{value}</span>
     </div>
   )
 }

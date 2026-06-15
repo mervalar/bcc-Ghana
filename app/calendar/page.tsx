@@ -223,7 +223,9 @@ export default function CalendarPage() {
                         }
 
                         return (
-                          <div key={e.id} className={cn("flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium leading-tight", meta.chip)} title={label}>
+                          <div key={e.id} className={cn("flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium leading-tight", meta.chip, e.status === "done" && "opacity-60")} title={label}>
+                            {e.status === "done" && <span className="shrink-0">✓</span>}
+                            {e.status === "postponed" && <span className="shrink-0">→</span>}
                             <span className="truncate">{label}</span>
                           </div>
                         )

@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 })
 
 export const metadata: Metadata = {
-  title: 'Bible Study Manager — Promotion 2026–2027',
-  description: 'Manage students, meetings, and the full Bible study academic calendar.',
+  title: 'BCC Ghana Admin— Promotion 2026–2027',
+  description: 'Manage students, meetings, and the full academic calendar.',
   generator: 'v0.app',
   icons: {
     icon: [

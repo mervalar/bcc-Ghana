@@ -192,6 +192,11 @@ const baseStudents: Student[] = [
 
 /* ── BUILDER ──────────────────────────────────────────────────────────────── */
 
+/** Returns only the 9 classes + 83 lessons — used to seed structure without touching students or promotions. */
+export function getClassTemplate(): { classes: typeof baseClasses; lessons: typeof baseLessons } {
+  return { classes: baseClasses, lessons: baseLessons }
+}
+
 export function buildSeed(): AppData {
   const data: AppData = {
     settings: { promotions: [{ id: "promo-default", name: "Promotion BCC Ghana 2026–2027", scheduleStartDate: "2026-09-04" }] },

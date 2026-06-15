@@ -40,7 +40,7 @@ import {
 } from "@/components/ui/dialog"
 import { toast } from "sonner"
 import { MoreHorizontal, Pencil, Plus, Search, Trash2, UserRound, Users } from "lucide-react"
-import { cn } from "@/lib/utils"
+import { getPromoColor } from "@/lib/promo-colors"
 
 function formatBirthday(iso: string): string {
   if (!iso) return "—"
@@ -59,6 +59,12 @@ export default function StudentsPage() {
   const promoNameById = useMemo(() => {
     const map = new Map<string, string>()
     for (const p of data.settings.promotions) map.set(p.id, p.name)
+    return map
+  }, [data.settings.promotions])
+
+  const promoColorById = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof getPromoColor>>()
+    for (const p of data.settings.promotions) map.set(p.id, getPromoColor(p.id, data.settings.promotions))
     return map
   }, [data.settings.promotions])
 
@@ -118,25 +124,27 @@ export default function StudentsPage() {
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
           <StatCard icon={Users} label="Total" value={data.students.length} />
           <StatCard icon={UserRound} label="Active" value={activeCount} />
-          {promoCounts.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              onClick={() => setPromoFilter(promoFilter === p.id ? "all" : p.id)}
-              className={cn(
-                "flex items-center gap-3 rounded-xl border bg-card p-4 text-left transition-colors hover:bg-muted/40",
-                promoFilter === p.id ? "border-primary ring-1 ring-primary" : "border-border",
-              )}
-            >
-              <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                <Users className="size-5" aria-hidden="true" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-2xl font-semibold leading-none text-foreground">{p.count}</p>
-                <p className="mt-1 truncate text-xs text-muted-foreground">{p.name}</p>
-              </div>
-            </button>
-          ))}
+          {promoCounts.map((p) => {
+            const c = promoColorById.get(p.id)
+            const active = promoFilter === p.id
+            return (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => setPromoFilter(active ? "all" : p.id)}
+                className="flex items-center gap-3 rounded-xl border border-border bg-card p-4 text-left transition-colors hover:bg-muted/40"
+                style={{ outline: active ? `2px solid ${c?.border}` : "none", outlineOffset: "2px" }}
+              >
+                <div className="flex size-10 shrink-0 items-center justify-center rounded-lg" style={{ backgroundColor: c?.bgLight, color: c?.textDark }}>
+                  <Users className="size-5" aria-hidden="true" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-2xl font-semibold leading-none text-foreground">{p.count}</p>
+                  <p className="mt-1 truncate text-xs text-muted-foreground">{p.name}</p>
+                </div>
+              </button>
+            )
+          })}
           {unassignedCount > 0 && (
             <StatCard icon={UserRound} label="Unassigned" value={unassignedCount} />
           )}
@@ -203,6 +211,7 @@ export default function StudentsPage() {
               ) : (
                 filtered.map((s) => {
                   const promoName = s.promotionId ? promoNameById.get(s.promotionId) : null
+                  const promoColor = s.promotionId ? promoColorById.get(s.promotionId) : undefined
                   return (
                     <TableRow key={s.id}>
                       <TableCell className="font-medium text-foreground">{studentName(s)}</TableCell>
@@ -210,7 +219,10 @@ export default function StudentsPage() {
                       <TableCell className="hidden text-muted-foreground lg:table-cell">{s.phone || "—"}</TableCell>
                       <TableCell className="hidden sm:table-cell">
                         {promoName ? (
-                          <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                          <span
+                            className="rounded-full px-2 py-0.5 text-xs font-medium"
+                            style={{ backgroundColor: promoColor?.bgLight, color: promoColor?.textDark }}
+                          >
                             {promoName}
                           </span>
                         ) : (

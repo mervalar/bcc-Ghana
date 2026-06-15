@@ -52,8 +52,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <BookOpen className="size-5" aria-hidden="true" />
         </div>
         <div className="min-w-0">
-          <p className="truncate text-sm font-semibold text-sidebar-foreground">Bible Study</p>
-          <p className="truncate text-xs text-muted-foreground">Bible Study Manager</p>
+          <p className="truncate text-sm font-semibold text-sidebar-foreground">BCC Ghana</p>
+          <p className="truncate text-xs text-muted-foreground">BCC Ghana Manager</p>
         </div>
       </div>
 
@@ -133,7 +133,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <Button variant="ghost" size="icon" onClick={() => setMobileOpen(true)} aria-label="Open menu">
             <Menu className="size-5" aria-hidden="true" />
           </Button>
-          <span className="text-sm font-semibold">Bible Study Manager</span>
+          <span className="text-sm font-semibold">BCC Ghana Manager</span>
         </header>
 
         <main className="flex-1">{children}</main>

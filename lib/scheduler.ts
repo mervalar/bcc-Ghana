@@ -14,6 +14,14 @@ export function fromISO(iso: string): Date {
   return new Date(y, m - 1, d)
 }
 
+/** Returns the ISO date of the next Friday (5) or Saturday (6) strictly after fromDate. */
+export function nextLessonDay(fromDate: string): string {
+  const d = fromISO(fromDate)
+  d.setDate(d.getDate() + 1)
+  while (d.getDay() !== 5 && d.getDay() !== 6) d.setDate(d.getDate() + 1)
+  return toISO(d)
+}
+
 function addDays(d: Date, n: number): Date {
   const r = new Date(d)
   r.setDate(r.getDate() + n)
@@ -191,6 +199,7 @@ function mergeEdit(base: CalendarEvent, editedMap: Map<string, CalendarEvent>): 
     title: edited.title,
     description: edited.description,
     reference: edited.reference ?? base.reference,
+    status: edited.status,
     edited: true,
   }
 }

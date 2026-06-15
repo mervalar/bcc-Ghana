@@ -27,7 +27,7 @@ export function LoginScreen() {
             <BookOpen className="size-7" aria-hidden="true" />
           </div>
           <div>
-            <h1 className="text-xl font-semibold tracking-tight text-foreground">Bible Study Manager</h1>
+            <h1 className="text-xl font-semibold tracking-tight text-foreground">Bcc ghana Manager</h1>
             <p className="text-sm text-muted-foreground">Promotion 2026–2027</p>
           </div>
         </div>

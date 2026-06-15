@@ -9,8 +9,10 @@ import type {
   Promotion,
   Student,
 } from "./types"
-import { generateSchedule } from "./scheduler"
-import { buildSeed } from "./seed"
+import { generateSchedule, nextLessonDay } from "./scheduler"
+import { buildSeed, getClassTemplate } from "./seed"
+import { supabase, rowToStudent, studentToRow, partialStudentToRow } from "./supabase"
+import { toast } from "sonner"
 
 const STORAGE_KEY = "bsm:data"
 
@@ -82,11 +84,17 @@ interface StoreValue {
   toggleTodo: (id: string) => void
   updateTodo: (id: string, text: string) => void
   deleteTodo: (id: string) => void
+  repairFellowships: (promotionId: string) => void
+  shiftEventsAfter: (promotionId: string, fromDate: string, deltaDays: number) => void
+  extendScheduleDay: (promotionId: string, fromDate: string) => void
+  markLessonDone: (id: string) => void
+  postponeLesson: (id: string) => void
   // data management
   importData: (payload: ImportPayload) => { students: number; classes: number; lessons: number }
   importStudentsForPromotion: (promoId: string, students: ImportPayload["students"]) => number
   exportData: () => AppData
   loadSeed: () => void
+  loadClassTemplate: () => void
   resetAll: () => void
 }
 
@@ -97,6 +105,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false)
   const hydrated = useRef(false)
 
+  // 1. Load non-student data from localStorage
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY)
@@ -110,6 +119,27 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     hydrated.current = true
     setReady(true)
   }, [])
+
+  // 2. Sync students with Supabase after localStorage hydration
+  useEffect(() => {
+    if (!ready) return
+    supabase.from("students").select("*").then(({ data: rows, error }) => {
+      if (error) { toast.error("Could not load students from database."); return }
+      const remote = (rows ?? []).map(rowToStudent)
+      if (remote.length > 0) {
+        // Supabase is the source of truth — use it
+        setData((prev) => ({ ...prev, students: remote }))
+      } else {
+        // Supabase empty — migrate any existing localStorage students up
+        setData((prev) => {
+          if (prev.students.length > 0) {
+            supabase.from("students").upsert(prev.students.map(studentToRow))
+          }
+          return prev
+        })
+      }
+    })
+  }, [ready])
 
   useEffect(() => {
     if (!hydrated.current) return
@@ -158,6 +188,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       mutateAndRegenerate((prev) => ({
         ...prev,
         settings: { promotions: prev.settings.promotions.filter((p) => p.id !== id) },
+        students: prev.students.filter((s) => s.promotionId !== id),
         events: prev.events.filter((e) => e.promotionId !== id),
       }))
     },
@@ -172,10 +203,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const addStudent = useCallback(
     (s: Omit<Student, "id">) => {
-      mutateAndRegenerate((prev) => ({
-        ...prev,
-        students: [...prev.students, { ...s, id: uid("st") }],
-      }))
+      const student: Student = { ...s, id: uid("st") }
+      mutateAndRegenerate((prev) => ({ ...prev, students: [...prev.students, student] }))
+      supabase.from("students").insert(studentToRow(student))
+        .then(({ error }) => { if (error) toast.error("Failed to save student to database.") })
     },
     [mutateAndRegenerate],
   )
@@ -186,16 +217,17 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         ...prev,
         students: prev.students.map((x) => (x.id === id ? { ...x, ...s } : x)),
       }))
+      supabase.from("students").update(partialStudentToRow(s)).eq("id", id)
+        .then(({ error }) => { if (error) toast.error("Failed to update student in database.") })
     },
     [mutateAndRegenerate],
   )
 
   const deleteStudent = useCallback(
     (id: string) => {
-      mutateAndRegenerate((prev) => ({
-        ...prev,
-        students: prev.students.filter((x) => x.id !== id),
-      }))
+      mutateAndRegenerate((prev) => ({ ...prev, students: prev.students.filter((x) => x.id !== id) }))
+      supabase.from("students").delete().eq("id", id)
+        .then(({ error }) => { if (error) toast.error("Failed to delete student from database.") })
     },
     [mutateAndRegenerate],
   )
@@ -207,6 +239,96 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       ...prev,
       events: prev.events.map((e) => (e.id === id ? { ...e, ...next, edited: true } : e)),
     }))
+  }, [])
+
+  const shiftEventsAfter = useCallback((promotionId: string, fromDate: string, deltaDays: number) => {
+    if (!deltaDays) return
+    setData((prev) => ({
+      ...prev,
+      events: prev.events.map((e) => {
+        if (e.promotionId !== promotionId || e.date <= fromDate) return e
+        const d = new Date(e.date + "T00:00:00")
+        d.setDate(d.getDate() + deltaDays)
+        return { ...e, date: d.toISOString().slice(0, 10), edited: true }
+      }),
+    }))
+  }, [])
+
+  const markLessonDone = useCallback((id: string) => {
+    setData((prev) => ({
+      ...prev,
+      events: prev.events.map((e) => e.id === id ? { ...e, status: "done" as const, edited: true } : e),
+    }))
+  }, [])
+
+  const postponeLesson = useCallback((id: string) => {
+    setData((prev) => {
+      const event = prev.events.find((e) => e.id === id)
+      if (!event?.promotionId) return prev
+
+      // Sort all lessons for this promotion by current date
+      const sorted = prev.events
+        .filter((e) => e.promotionId === event.promotionId && e.type === "lesson")
+        .sort((a, b) => a.date.localeCompare(b.date))
+
+      const startIdx = sorted.findIndex((e) => e.id === id)
+      if (startIdx < 0) return prev
+
+      // Cascade: each lesson from startIdx onwards takes nextLessonDay of the
+      // PREVIOUS lesson's new date — no collisions, Fri/Sat pattern guaranteed.
+      // Fellowships, crusades, and birthdays are never touched.
+      const newDates = new Map<string, string>()
+      let prevDate = sorted[startIdx].date
+      for (let i = startIdx; i < sorted.length; i++) {
+        const next = nextLessonDay(prevDate)
+        newDates.set(sorted[i].id, next)
+        prevDate = next
+      }
+
+      return {
+        ...prev,
+        events: prev.events.map((e) => {
+          const d = newDates.get(e.id)
+          if (!d) return e
+          return { ...e, date: d, edited: true }
+        }),
+      }
+    })
+  }, [])
+
+  const extendScheduleDay = useCallback((promotionId: string, fromDate: string) => {
+    setData((prev) => {
+      // Find the most recent lesson for this promotion before fromDate
+      const prevLesson = [...prev.events]
+        .filter((e) => e.promotionId === promotionId && e.type === "lesson" && e.date < fromDate)
+        .sort((a, b) => b.date.localeCompare(a.date))[0]
+
+      // Shift all events from fromDate onwards (inclusive) by +1 day
+      const shifted = prev.events.map((e) => {
+        if (e.promotionId !== promotionId || e.date < fromDate) return e
+        const d = new Date(e.date + "T00:00:00")
+        d.setDate(d.getDate() + 1)
+        return { ...e, date: d.toISOString().slice(0, 10), edited: true }
+      })
+
+      if (!prevLesson) return { ...prev, events: shifted }
+
+      // Insert a repeat of the previous lesson at fromDate
+      const repeat: CalendarEvent = {
+        id: uid("ev"),
+        date: fromDate,
+        type: "lesson",
+        title: prevLesson.title,
+        description: prevLesson.description ?? "",
+        reference: prevLesson.reference,
+        lessonId: prevLesson.lessonId,
+        classId: prevLesson.classId,
+        promotionId,
+        edited: true,
+      }
+
+      return { ...prev, events: [...shifted, repeat] }
+    })
   }, [])
 
   /* ── Meetings ── */
@@ -300,21 +422,21 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const importStudentsForPromotion = useCallback(
     (promoId: string, students: ImportPayload["students"]) => {
       if (!students?.length) return 0
-      mutateAndRegenerate((prev) => {
-        const newStudents = students.map((s) => ({
-          id: s.id ?? uid("st"),
-          firstName: s.firstName ?? "",
-          lastName: s.lastName ?? "",
-          email: s.email ?? "",
-          phone: s.phone ?? "",
-          birthday: s.birthday ?? "",
-          classId: s.classId ?? null,
-          promotionId: promoId,
-          status: s.status ?? "active",
-          notes: s.notes ?? "",
-        }))
-        return { ...prev, students: [...prev.students, ...newStudents] }
-      })
+      const newStudents: Student[] = students.map((s) => ({
+        id: s.id ?? uid("st"),
+        firstName: s.firstName ?? "",
+        lastName: s.lastName ?? "",
+        email: s.email ?? "",
+        phone: s.phone ?? "",
+        birthday: s.birthday ?? "",
+        classId: s.classId ?? "",
+        promotionId: promoId,
+        status: s.status ?? "active",
+        notes: s.notes ?? "",
+      }))
+      mutateAndRegenerate((prev) => ({ ...prev, students: [...prev.students, ...newStudents] }))
+      supabase.from("students").upsert(newStudents.map(studentToRow))
+        .then(({ error }) => { if (error) toast.error("Failed to import students to database.") })
       return students.length
     },
     [mutateAndRegenerate],
@@ -324,6 +446,43 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const loadSeed = useCallback(() => {
     setData(buildSeed())
+  }, [])
+
+  const loadClassTemplate = useCallback(() => {
+    const { classes, lessons } = getClassTemplate()
+    mutateAndRegenerate((prev) => ({ ...prev, classes, lessons }))
+  }, [mutateAndRegenerate])
+
+  const repairFellowships = useCallback((promotionId: string) => {
+    setData((prev) => {
+      // Find the date range from lessons for this promotion
+      const lessons = prev.events.filter((e) => e.promotionId === promotionId && e.type === "lesson")
+      if (!lessons.length) return prev
+
+      const dates = lessons.map((e) => e.date).sort()
+      const start = new Date(dates[0] + "T00:00:00")
+      const end = new Date(dates[dates.length - 1] + "T00:00:00")
+      end.setDate(end.getDate() + 14)
+
+      // Build correct Sunday fellowship events
+      const correct: CalendarEvent[] = []
+      const d = new Date(start)
+      while (d.getDay() !== 0) d.setDate(d.getDate() - 1) // rewind to prev Sunday
+      while (d <= end) {
+        const iso = d.toISOString().slice(0, 10)
+        correct.push({ id: `${promotionId}-fellowship-${iso}`, date: iso, type: "fellowship", title: "Sunday Fellowship", description: "Weekly fellowship gathering.", promotionId })
+        d.setDate(d.getDate() + 7)
+      }
+
+      // Remove all fellowship events for this promotion and replace with correct ones
+      return {
+        ...prev,
+        events: [
+          ...prev.events.filter((e) => !(e.promotionId === promotionId && e.type === "fellowship")),
+          ...correct,
+        ],
+      }
+    })
   }, [])
 
   const resetAll = useCallback(() => {
@@ -342,6 +501,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       updateStudent,
       deleteStudent,
       updateEvent,
+      repairFellowships,
+      shiftEventsAfter,
+      extendScheduleDay,
+      markLessonDone,
+      postponeLesson,
       addMeeting,
       updateMeeting,
       deleteMeeting,
@@ -353,16 +517,17 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       importStudentsForPromotion,
       exportData,
       loadSeed,
+      loadClassTemplate,
       resetAll,
     }),
     [
       data, ready,
       addPromotion, updatePromotion, deletePromotion, regenerate,
       addStudent, updateStudent, deleteStudent,
-      updateEvent,
+      updateEvent, repairFellowships, shiftEventsAfter, extendScheduleDay, markLessonDone, postponeLesson,
       addMeeting, updateMeeting, deleteMeeting,
       addTodo, toggleTodo, updateTodo, deleteTodo,
-      importData, importStudentsForPromotion, exportData, loadSeed, resetAll,
+      importData, importStudentsForPromotion, exportData, loadSeed, loadClassTemplate, resetAll,
     ],
   )
 
