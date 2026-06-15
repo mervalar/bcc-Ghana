@@ -1,85 +1,44 @@
 "use client"
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react"
-import type {
-  AppData,
-  CalendarEvent,
-  ImportPayload,
-  Meeting,
-  Promotion,
-  Student,
-} from "./types"
+import type { AppData, BibleClass, CalendarEvent, ImportPayload, Lesson, Meeting, Promotion, Student, Todo } from "./types"
 import { generateSchedule, nextLessonDay } from "./scheduler"
-import { buildSeed, getClassTemplate } from "./seed"
-import { supabase, rowToStudent, studentToRow, partialStudentToRow } from "./supabase"
+import { getClassTemplate } from "./seed"
 import { toast } from "sonner"
-
-const STORAGE_KEY = "bsm:data"
+import {
+  supabase,
+  rowToPromotion, promotionToRow,
+  rowToStudent,   studentToRow, partialStudentToRow,
+  rowToClass,     classToRow,
+  rowToLesson,    lessonToRow,
+  rowToEvent,     eventToRow,
+  rowToMeeting,   meetingToRow,
+  rowToTodo,      todoToRow,
+  upsertEvents, replacePromoEvents, replaceAllEvents,
+} from "./supabase"
 
 function uid(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 9)}${Date.now().toString(36).slice(-4)}`
 }
 
-function defaultPromotion(): Promotion {
-  return { id: "promo-default", name: "Promotion 2026–2027", scheduleStartDate: "2026-09-04" }
-}
-
 function emptyData(): AppData {
-  return {
-    settings: { promotions: [defaultPromotion()] },
-    students: [],
-    classes: [],
-    lessons: [],
-    events: [],
-    meetings: [],
-    todos: [],
-  }
-}
-
-/** Migrate localStorage data from old single-promotion format to multi-promotion format. */
-function migrate(raw: unknown): AppData {
-  const parsed = raw as AppData & {
-    settings: AppData["settings"] & { promotionName?: string; scheduleStartDate?: string }
-  }
-  const base = { ...emptyData(), ...parsed }
-
-  // Old format had settings.promotionName — convert to promotions array
-  const s = parsed.settings as { promotionName?: string; scheduleStartDate?: string; promotions?: Promotion[] }
-  if (!s.promotions) {
-    const legacyPromo: Promotion = {
-      id: "promo-default",
-      name: s.promotionName ?? "Promotion 2026–2027",
-      scheduleStartDate: s.scheduleStartDate ?? "2026-09-04",
-    }
-    base.settings = { promotions: [legacyPromo] }
-    // Tag existing non-birthday events with the default promotionId
-    base.events = (parsed.events ?? []).map((e) =>
-      e.type === "birthday" || e.promotionId ? e : { ...e, promotionId: "promo-default" },
-    )
-  }
-
-  return base
+  return { settings: { promotions: [] }, students: [], classes: [], lessons: [], events: [], meetings: [], todos: [] }
 }
 
 interface StoreValue {
   data: AppData
   ready: boolean
-  // promotions
   addPromotion: (p: Omit<Promotion, "id">) => string
   updatePromotion: (id: string, next: Partial<Promotion>) => void
   deletePromotion: (id: string) => void
   regenerate: () => void
-  // students
   addStudent: (s: Omit<Student, "id">) => void
   updateStudent: (id: string, s: Partial<Student>) => void
   deleteStudent: (id: string) => void
-  // events
   updateEvent: (id: string, next: Partial<CalendarEvent>) => void
-  // meetings
   addMeeting: (m: Omit<Meeting, "id" | "createdAt">) => string
   updateMeeting: (id: string, next: Partial<Meeting>) => void
   deleteMeeting: (id: string) => void
-  // todos
   addTodo: (text: string, meetingId?: string) => void
   toggleTodo: (id: string) => void
   updateTodo: (id: string, text: string) => void
@@ -89,7 +48,6 @@ interface StoreValue {
   extendScheduleDay: (promotionId: string, fromDate: string) => void
   markLessonDone: (id: string) => void
   postponeLesson: (id: string) => void
-  // data management
   importData: (payload: ImportPayload) => { students: number; classes: number; lessons: number }
   importStudentsForPromotion: (promoId: string, students: ImportPayload["students"]) => number
   exportData: () => AppData
@@ -101,424 +59,390 @@ interface StoreValue {
 const StoreContext = createContext<StoreValue | null>(null)
 
 export function StoreProvider({ children }: { children: React.ReactNode }) {
-  const [data, setData] = useState<AppData>(emptyData)
-  const [ready, setReady] = useState(false)
-  const hydrated = useRef(false)
+  const [data, setDataState] = useState<AppData>(emptyData)
+  const [ready, setReady]    = useState(false)
+  const dataRef              = useRef<AppData>(emptyData())
 
-  // 1. Load non-student data from localStorage
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY)
-      if (raw) {
-        const parsed = JSON.parse(raw)
-        setData(migrate(parsed))
-      }
-    } catch {
-      // ignore
-    }
-    hydrated.current = true
-    setReady(true)
+  // Single setter that keeps ref in sync
+  const setData = useCallback((next: AppData) => {
+    dataRef.current = next
+    setDataState(next)
   }, [])
 
-  // 2. Sync students with Supabase after localStorage hydration
+  /* ── Load everything from Supabase on mount ── */
+
   useEffect(() => {
-    if (!ready) return
-    supabase.from("students").select("*").then(({ data: rows, error }) => {
-      if (error) { toast.error("Could not load students from database."); return }
-      const remote = (rows ?? []).map(rowToStudent)
-      if (remote.length > 0) {
-        // Supabase is the source of truth — use it
-        setData((prev) => ({ ...prev, students: remote }))
-      } else {
-        // Supabase empty — migrate any existing localStorage students up
-        setData((prev) => {
-          if (prev.students.length > 0) {
-            supabase.from("students").upsert(prev.students.map(studentToRow))
-          }
-          return prev
+    async function loadAll() {
+      try {
+        const [promos, students, classes, lessons, events, meetings, todos] = await Promise.all([
+          supabase.from("promotions").select("*"),
+          supabase.from("students").select("*"),
+          supabase.from("classes").select("*").order("order"),
+          supabase.from("lessons").select("*").order("order"),
+          supabase.from("events").select("*"),
+          supabase.from("meetings").select("*").order("created_at", { ascending: false }),
+          supabase.from("todos").select("*"),
+        ])
+
+        setData({
+          settings: { promotions: (promos.data   ?? []).map(rowToPromotion) },
+          students:              (students.data  ?? []).map(rowToStudent),
+          classes:               (classes.data   ?? []).map(rowToClass),
+          lessons:               (lessons.data   ?? []).map(rowToLesson),
+          events:                (events.data    ?? []).map(rowToEvent),
+          meetings:              (meetings.data  ?? []).map(rowToMeeting),
+          todos:                 (todos.data     ?? []).map(rowToTodo),
         })
+      } catch {
+        toast.error("Could not load data from database.")
+      } finally {
+        setReady(true)
       }
-    })
-  }, [ready])
-
-  useEffect(() => {
-    if (!hydrated.current) return
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
-    } catch {
-      // ignore
     }
-  }, [data])
-
-  const mutateAndRegenerate = useCallback((producer: (prev: AppData) => AppData) => {
-    setData((prev) => {
-      const next = producer(prev)
-      return { ...next, events: generateSchedule(next) }
-    })
-  }, [])
+    loadAll()
+  }, [setData])
 
   /* ── Promotions ── */
 
-  const addPromotion = useCallback(
-    (p: Omit<Promotion, "id">) => {
-      const id = uid("promo")
-      mutateAndRegenerate((prev) => ({
-        ...prev,
-        settings: { promotions: [...prev.settings.promotions, { ...p, id }] },
-      }))
-      return id
-    },
-    [mutateAndRegenerate],
-  )
+  const addPromotion = useCallback((p: Omit<Promotion, "id">) => {
+    const id        = uid("promo")
+    const promotion = { ...p, id }
+    const prev      = dataRef.current
+    const next      = { ...prev, settings: { promotions: [...prev.settings.promotions, promotion] } }
+    const withEvts  = { ...next, events: generateSchedule(next) }
+    setData(withEvts)
 
-  const updatePromotion = useCallback(
-    (id: string, next: Partial<Promotion>) => {
-      mutateAndRegenerate((prev) => ({
-        ...prev,
-        settings: {
-          promotions: prev.settings.promotions.map((p) => (p.id === id ? { ...p, ...next } : p)),
-        },
-      }))
-    },
-    [mutateAndRegenerate],
-  )
+    supabase.from("promotions").insert(promotionToRow(promotion))
+      .then(({ error }) => { if (error) toast.error("Failed to save promotion.") })
+    const promoEvts = withEvts.events.filter((e) => e.promotionId === id)
+    if (promoEvts.length) upsertEvents(promoEvts).catch(() => toast.error("Failed to sync events."))
 
-  const deletePromotion = useCallback(
-    (id: string) => {
-      mutateAndRegenerate((prev) => ({
-        ...prev,
-        settings: { promotions: prev.settings.promotions.filter((p) => p.id !== id) },
-        students: prev.students.filter((s) => s.promotionId !== id),
-        events: prev.events.filter((e) => e.promotionId !== id),
-      }))
-    },
-    [mutateAndRegenerate],
-  )
+    return id
+  }, [setData])
+
+  const updatePromotion = useCallback((id: string, patch: Partial<Promotion>) => {
+    const prev   = dataRef.current
+    const promos = prev.settings.promotions.map((p) => (p.id === id ? { ...p, ...patch } : p))
+    const next   = { ...prev, settings: { promotions: promos } }
+    const withEvts = { ...next, events: generateSchedule(next) }
+    setData(withEvts)
+
+    const updated = promos.find((p) => p.id === id)!
+    supabase.from("promotions").update(promotionToRow(updated)).eq("id", id)
+      .then(({ error }) => { if (error) toast.error("Failed to update promotion.") })
+    replacePromoEvents(id, withEvts.events).catch(() => toast.error("Failed to sync events."))
+  }, [setData])
+
+  const deletePromotion = useCallback((id: string) => {
+    const prev = dataRef.current
+    setData({
+      ...prev,
+      settings: { promotions: prev.settings.promotions.filter((p) => p.id !== id) },
+      students:  prev.students.filter((s) => s.promotionId !== id),
+      events:    prev.events.filter((e) => e.promotionId !== id),
+    })
+    supabase.from("promotions").delete().eq("id", id)
+    supabase.from("students").delete().eq("promotion_id", id)
+    supabase.from("events").delete().eq("promotion_id", id)
+  }, [setData])
 
   const regenerate = useCallback(() => {
-    setData((prev) => ({ ...prev, events: generateSchedule(prev) }))
-  }, [])
+    const prev    = dataRef.current
+    const withEvts = { ...prev, events: generateSchedule(prev) }
+    setData(withEvts)
+    replaceAllEvents(withEvts.events).catch(() => toast.error("Failed to sync events."))
+  }, [setData])
 
   /* ── Students ── */
 
-  const addStudent = useCallback(
-    (s: Omit<Student, "id">) => {
-      const student: Student = { ...s, id: uid("st") }
-      mutateAndRegenerate((prev) => ({ ...prev, students: [...prev.students, student] }))
-      supabase.from("students").insert(studentToRow(student))
-        .then(({ error }) => { if (error) toast.error("Failed to save student to database.") })
-    },
-    [mutateAndRegenerate],
-  )
+  const addStudent = useCallback((s: Omit<Student, "id">) => {
+    const student  = { ...s, id: uid("st") } as Student
+    const prev     = dataRef.current
+    const next     = { ...prev, students: [...prev.students, student] }
+    const withEvts = { ...next, events: generateSchedule(next) }
+    setData(withEvts)
 
-  const updateStudent = useCallback(
-    (id: string, s: Partial<Student>) => {
-      mutateAndRegenerate((prev) => ({
-        ...prev,
-        students: prev.students.map((x) => (x.id === id ? { ...x, ...s } : x)),
-      }))
-      supabase.from("students").update(partialStudentToRow(s)).eq("id", id)
-        .then(({ error }) => { if (error) toast.error("Failed to update student in database.") })
-    },
-    [mutateAndRegenerate],
-  )
+    supabase.from("students").insert(studentToRow(student))
+      .then(({ error }) => { if (error) toast.error("Failed to save student.") })
+    const birthdays = withEvts.events.filter((e) => e.type === "birthday" && e.studentId === student.id)
+    if (birthdays.length) upsertEvents(birthdays).catch(() => {})
+  }, [setData])
 
-  const deleteStudent = useCallback(
-    (id: string) => {
-      mutateAndRegenerate((prev) => ({ ...prev, students: prev.students.filter((x) => x.id !== id) }))
-      supabase.from("students").delete().eq("id", id)
-        .then(({ error }) => { if (error) toast.error("Failed to delete student from database.") })
-    },
-    [mutateAndRegenerate],
-  )
+  const updateStudent = useCallback((id: string, s: Partial<Student>) => {
+    const prev     = dataRef.current
+    const next     = { ...prev, students: prev.students.map((x) => (x.id === id ? { ...x, ...s } : x)) }
+    const withEvts = { ...next, events: generateSchedule(next) }
+    setData(withEvts)
+
+    supabase.from("students").update(partialStudentToRow(s)).eq("id", id)
+      .then(({ error }) => { if (error) toast.error("Failed to update student.") })
+    if (s.birthday !== undefined) {
+      const birthdays = withEvts.events.filter((e) => e.type === "birthday" && e.studentId === id)
+      supabase.from("events").delete().eq("student_id", id).then(() => {
+        if (birthdays.length) upsertEvents(birthdays).catch(() => {})
+      })
+    }
+  }, [setData])
+
+  const deleteStudent = useCallback((id: string) => {
+    const prev     = dataRef.current
+    const next     = { ...prev, students: prev.students.filter((x) => x.id !== id) }
+    const withEvts = { ...next, events: generateSchedule(next) }
+    setData(withEvts)
+    supabase.from("students").delete().eq("id", id)
+    supabase.from("events").delete().eq("student_id", id)
+  }, [setData])
 
   /* ── Events ── */
 
-  const updateEvent = useCallback((id: string, next: Partial<CalendarEvent>) => {
-    setData((prev) => ({
-      ...prev,
-      events: prev.events.map((e) => (e.id === id ? { ...e, ...next, edited: true } : e)),
-    }))
-  }, [])
+  const updateEvent = useCallback((id: string, patch: Partial<CalendarEvent>) => {
+    const prev    = dataRef.current
+    const events  = prev.events.map((e) => (e.id === id ? { ...e, ...patch, edited: true } : e))
+    setData({ ...prev, events })
+    const updated = events.find((e) => e.id === id)
+    if (updated) supabase.from("events").upsert(eventToRow(updated))
+      .then(({ error }) => { if (error) toast.error("Failed to update event.") })
+  }, [setData])
+
+  const markLessonDone = useCallback((id: string) => {
+    const prev   = dataRef.current
+    const events = prev.events.map((e) => (e.id === id ? { ...e, status: "done" as const, edited: true } : e))
+    setData({ ...prev, events })
+    const updated = events.find((e) => e.id === id)
+    if (updated) supabase.from("events").upsert(eventToRow(updated))
+  }, [setData])
+
+  const postponeLesson = useCallback((id: string) => {
+    const prev  = dataRef.current
+    const event = prev.events.find((e) => e.id === id)
+    if (!event?.promotionId) return
+
+    const sorted   = prev.events
+      .filter((e) => e.promotionId === event.promotionId && e.type === "lesson")
+      .sort((a, b) => a.date.localeCompare(b.date))
+    const startIdx = sorted.findIndex((e) => e.id === id)
+    if (startIdx < 0) return
+
+    const newDates = new Map<string, string>()
+    let prevDate   = sorted[startIdx].date
+    for (let i = startIdx; i < sorted.length; i++) {
+      const next = nextLessonDay(prevDate)
+      newDates.set(sorted[i].id, next)
+      prevDate = next
+    }
+
+    const events = prev.events.map((e) => {
+      const d = newDates.get(e.id)
+      return d ? { ...e, date: d, edited: true } : e
+    })
+    setData({ ...prev, events })
+    const changed = events.filter((e) => newDates.has(e.id))
+    upsertEvents(changed).catch(() => toast.error("Failed to sync postponed lessons."))
+  }, [setData])
 
   const shiftEventsAfter = useCallback((promotionId: string, fromDate: string, deltaDays: number) => {
     if (!deltaDays) return
-    setData((prev) => ({
-      ...prev,
-      events: prev.events.map((e) => {
-        if (e.promotionId !== promotionId || e.date <= fromDate) return e
-        const d = new Date(e.date + "T00:00:00")
-        d.setDate(d.getDate() + deltaDays)
-        return { ...e, date: d.toISOString().slice(0, 10), edited: true }
-      }),
-    }))
-  }, [])
-
-  const markLessonDone = useCallback((id: string) => {
-    setData((prev) => ({
-      ...prev,
-      events: prev.events.map((e) => e.id === id ? { ...e, status: "done" as const, edited: true } : e),
-    }))
-  }, [])
-
-  const postponeLesson = useCallback((id: string) => {
-    setData((prev) => {
-      const event = prev.events.find((e) => e.id === id)
-      if (!event?.promotionId) return prev
-
-      // Sort all lessons for this promotion by current date
-      const sorted = prev.events
-        .filter((e) => e.promotionId === event.promotionId && e.type === "lesson")
-        .sort((a, b) => a.date.localeCompare(b.date))
-
-      const startIdx = sorted.findIndex((e) => e.id === id)
-      if (startIdx < 0) return prev
-
-      // Cascade: each lesson from startIdx onwards takes nextLessonDay of the
-      // PREVIOUS lesson's new date — no collisions, Fri/Sat pattern guaranteed.
-      // Fellowships, crusades, and birthdays are never touched.
-      const newDates = new Map<string, string>()
-      let prevDate = sorted[startIdx].date
-      for (let i = startIdx; i < sorted.length; i++) {
-        const next = nextLessonDay(prevDate)
-        newDates.set(sorted[i].id, next)
-        prevDate = next
-      }
-
-      return {
-        ...prev,
-        events: prev.events.map((e) => {
-          const d = newDates.get(e.id)
-          if (!d) return e
-          return { ...e, date: d, edited: true }
-        }),
-      }
+    const prev   = dataRef.current
+    const events = prev.events.map((e) => {
+      if (e.promotionId !== promotionId || e.date <= fromDate) return e
+      const d = new Date(e.date + "T00:00:00")
+      d.setDate(d.getDate() + deltaDays)
+      return { ...e, date: d.toISOString().slice(0, 10), edited: true }
     })
-  }, [])
+    setData({ ...prev, events })
+    const changed = events.filter((e) => e.promotionId === promotionId && e.date > fromDate)
+    upsertEvents(changed).catch(() => {})
+  }, [setData])
 
   const extendScheduleDay = useCallback((promotionId: string, fromDate: string) => {
-    setData((prev) => {
-      // Find the most recent lesson for this promotion before fromDate
-      const prevLesson = [...prev.events]
-        .filter((e) => e.promotionId === promotionId && e.type === "lesson" && e.date < fromDate)
-        .sort((a, b) => b.date.localeCompare(a.date))[0]
+    const prev       = dataRef.current
+    const prevLesson = [...prev.events]
+      .filter((e) => e.promotionId === promotionId && e.type === "lesson" && e.date < fromDate)
+      .sort((a, b) => b.date.localeCompare(a.date))[0]
 
-      // Shift all events from fromDate onwards (inclusive) by +1 day
-      const shifted = prev.events.map((e) => {
-        if (e.promotionId !== promotionId || e.date < fromDate) return e
-        const d = new Date(e.date + "T00:00:00")
-        d.setDate(d.getDate() + 1)
-        return { ...e, date: d.toISOString().slice(0, 10), edited: true }
-      })
-
-      if (!prevLesson) return { ...prev, events: shifted }
-
-      // Insert a repeat of the previous lesson at fromDate
-      const repeat: CalendarEvent = {
-        id: uid("ev"),
-        date: fromDate,
-        type: "lesson",
-        title: prevLesson.title,
-        description: prevLesson.description ?? "",
-        reference: prevLesson.reference,
-        lessonId: prevLesson.lessonId,
-        classId: prevLesson.classId,
-        promotionId,
-        edited: true,
-      }
-
-      return { ...prev, events: [...shifted, repeat] }
+    const shifted = prev.events.map((e) => {
+      if (e.promotionId !== promotionId || e.date < fromDate) return e
+      const d = new Date(e.date + "T00:00:00")
+      d.setDate(d.getDate() + 1)
+      return { ...e, date: d.toISOString().slice(0, 10), edited: true }
     })
-  }, [])
+
+    if (!prevLesson) {
+      setData({ ...prev, events: shifted })
+      upsertEvents(shifted.filter((e) => e.promotionId === promotionId && e.edited)).catch(() => {})
+      return
+    }
+
+    const repeat: CalendarEvent = {
+      id: uid("ev"), date: fromDate, type: "lesson",
+      title: prevLesson.title, description: prevLesson.description ?? "",
+      reference: prevLesson.reference, lessonId: prevLesson.lessonId,
+      classId: prevLesson.classId, promotionId, edited: true,
+    }
+    const events = [...shifted, repeat]
+    setData({ ...prev, events })
+    upsertEvents([...shifted.filter((e) => e.promotionId === promotionId && e.edited), repeat]).catch(() => {})
+  }, [setData])
+
+  const repairFellowships = useCallback((promotionId: string) => {
+    const prev    = dataRef.current
+    const lessons = prev.events.filter((e) => e.promotionId === promotionId && e.type === "lesson")
+    if (!lessons.length) return
+
+    const dates = lessons.map((e) => e.date).sort()
+    const start = new Date(dates[0] + "T00:00:00")
+    const end   = new Date(dates[dates.length - 1] + "T00:00:00")
+    end.setDate(end.getDate() + 14)
+
+    const correct: CalendarEvent[] = []
+    const d = new Date(start)
+    while (d.getDay() !== 0) d.setDate(d.getDate() - 1)
+    while (d <= end) {
+      const iso = d.toISOString().slice(0, 10)
+      correct.push({ id: `${promotionId}-fellowship-${iso}`, date: iso, type: "fellowship", title: "Sunday Fellowship", description: "Weekly fellowship gathering.", promotionId })
+      d.setDate(d.getDate() + 7)
+    }
+
+    setData({
+      ...prev,
+      events: [...prev.events.filter((e) => !(e.promotionId === promotionId && e.type === "fellowship")), ...correct],
+    })
+    supabase.from("events").delete().eq("promotion_id", promotionId).eq("type", "fellowship").then(() => {
+      upsertEvents(correct).catch(() => {})
+    })
+  }, [setData])
 
   /* ── Meetings ── */
 
   const addMeeting = useCallback((m: Omit<Meeting, "id" | "createdAt">) => {
-    const id = uid("mt")
-    setData((prev) => ({
-      ...prev,
-      meetings: [{ ...m, id, createdAt: new Date().toISOString() }, ...prev.meetings],
-    }))
+    const id      = uid("mt")
+    const meeting = { ...m, id, createdAt: new Date().toISOString() }
+    const prev    = dataRef.current
+    setData({ ...prev, meetings: [meeting, ...prev.meetings] })
+    supabase.from("meetings").insert(meetingToRow(meeting))
+      .then(({ error }) => { if (error) toast.error("Failed to save meeting.") })
     return id
-  }, [])
+  }, [setData])
 
-  const updateMeeting = useCallback((id: string, next: Partial<Meeting>) => {
-    setData((prev) => ({
-      ...prev,
-      meetings: prev.meetings.map((x) => (x.id === id ? { ...x, ...next } : x)),
-    }))
-  }, [])
+  const updateMeeting = useCallback((id: string, patch: Partial<Meeting>) => {
+    const prev = dataRef.current
+    setData({ ...prev, meetings: prev.meetings.map((x) => (x.id === id ? { ...x, ...patch } : x)) })
+    supabase.from("meetings").update(patch).eq("id", id)
+      .then(({ error }) => { if (error) toast.error("Failed to update meeting.") })
+  }, [setData])
 
   const deleteMeeting = useCallback((id: string) => {
-    setData((prev) => ({
-      ...prev,
-      meetings: prev.meetings.filter((x) => x.id !== id),
-      todos: prev.todos.filter((t) => t.meetingId !== id),
-    }))
-  }, [])
+    const prev = dataRef.current
+    setData({ ...prev, meetings: prev.meetings.filter((x) => x.id !== id), todos: prev.todos.filter((t) => t.meetingId !== id) })
+    supabase.from("meetings").delete().eq("id", id) // todos cascade-deleted by Supabase FK
+  }, [setData])
 
   /* ── Todos ── */
 
   const addTodo = useCallback((text: string, meetingId?: string) => {
-    setData((prev) => ({
-      ...prev,
-      todos: [
-        ...prev.todos,
-        { id: uid("td"), text, done: false, createdAt: new Date().toISOString(), meetingId },
-      ],
-    }))
-  }, [])
+    const todo = { id: uid("td"), text, done: false, createdAt: new Date().toISOString(), meetingId } as Todo
+    const prev = dataRef.current
+    setData({ ...prev, todos: [...prev.todos, todo] })
+    supabase.from("todos").insert(todoToRow(todo))
+      .then(({ error }) => { if (error) toast.error("Failed to save todo.") })
+  }, [setData])
 
   const toggleTodo = useCallback((id: string) => {
-    setData((prev) => ({
-      ...prev,
-      todos: prev.todos.map((t) => (t.id === id ? { ...t, done: !t.done } : t)),
-    }))
-  }, [])
+    const prev  = dataRef.current
+    const todos = prev.todos.map((t) => (t.id === id ? { ...t, done: !t.done } : t))
+    setData({ ...prev, todos })
+    const updated = todos.find((t) => t.id === id)
+    if (updated) supabase.from("todos").update({ done: updated.done }).eq("id", id)
+  }, [setData])
 
   const updateTodo = useCallback((id: string, text: string) => {
-    setData((prev) => ({
-      ...prev,
-      todos: prev.todos.map((t) => (t.id === id ? { ...t, text } : t)),
-    }))
-  }, [])
+    const prev = dataRef.current
+    setData({ ...prev, todos: prev.todos.map((t) => (t.id === id ? { ...t, text } : t)) })
+    supabase.from("todos").update({ text }).eq("id", id)
+  }, [setData])
 
   const deleteTodo = useCallback((id: string) => {
-    setData((prev) => ({ ...prev, todos: prev.todos.filter((t) => t.id !== id) }))
-  }, [])
+    const prev = dataRef.current
+    setData({ ...prev, todos: prev.todos.filter((t) => t.id !== id) })
+    supabase.from("todos").delete().eq("id", id)
+  }, [setData])
 
   /* ── Data management ── */
 
-  const importData = useCallback(
-    (payload: ImportPayload) => {
-      const counts = { students: 0, classes: 0, lessons: 0 }
-      mutateAndRegenerate((prev) => {
-        const classes = payload.classes ?? prev.classes
-        const lessons = payload.lessons ?? prev.lessons
-        const students = payload.students
-          ? payload.students.map((s) => ({
-              id: s.id ?? uid("st"),
-              firstName: s.firstName ?? "",
-              lastName: s.lastName ?? "",
-              email: s.email ?? "",
-              phone: s.phone ?? "",
-              birthday: s.birthday ?? "",
-              classId: s.classId ?? null,
-              promotionId: s.promotionId ?? null,
-              status: s.status ?? "active",
-              notes: s.notes ?? "",
-            }))
-          : prev.students
-        counts.students = students.length
-        counts.classes = classes.length
-        counts.lessons = lessons.length
-        return { ...prev, classes, lessons, students }
-      })
-      return counts
-    },
-    [mutateAndRegenerate],
-  )
+  const importData = useCallback((payload: ImportPayload) => {
+    const counts  = { students: 0, classes: 0, lessons: 0 }
+    const prev    = dataRef.current
+    const classes  = (payload.classes  ?? prev.classes)  as BibleClass[]
+    const lessons  = (payload.lessons  ?? prev.lessons)  as Lesson[]
+    const students = payload.students
+      ? payload.students.map((s) => ({ id: s.id ?? uid("st"), firstName: s.firstName ?? "", lastName: s.lastName ?? "", email: s.email ?? "", phone: s.phone ?? "", birthday: s.birthday ?? "", classId: s.classId ?? "", promotionId: s.promotionId ?? "", status: s.status ?? "active", notes: s.notes ?? "" } as Student))
+      : prev.students
 
-  const importStudentsForPromotion = useCallback(
-    (promoId: string, students: ImportPayload["students"]) => {
-      if (!students?.length) return 0
-      const newStudents: Student[] = students.map((s) => ({
-        id: s.id ?? uid("st"),
-        firstName: s.firstName ?? "",
-        lastName: s.lastName ?? "",
-        email: s.email ?? "",
-        phone: s.phone ?? "",
-        birthday: s.birthday ?? "",
-        classId: s.classId ?? "",
-        promotionId: promoId,
-        status: s.status ?? "active",
-        notes: s.notes ?? "",
-      }))
-      mutateAndRegenerate((prev) => ({ ...prev, students: [...prev.students, ...newStudents] }))
-      supabase.from("students").upsert(newStudents.map(studentToRow))
-        .then(({ error }) => { if (error) toast.error("Failed to import students to database.") })
-      return students.length
-    },
-    [mutateAndRegenerate],
-  )
+    counts.students = students.length
+    counts.classes  = classes.length
+    counts.lessons  = lessons.length
 
-  const exportData = useCallback(() => data, [data])
+    const next     = { ...prev, classes, lessons, students }
+    const withEvts = { ...next, events: generateSchedule(next) }
+    setData(withEvts)
 
-  const loadSeed = useCallback(() => {
-    setData(buildSeed())
-  }, [])
+    if (payload.classes)  supabase.from("classes").upsert(classes.map(classToRow))
+    if (payload.lessons)  supabase.from("lessons").upsert(lessons.map(lessonToRow))
+    if (payload.students) supabase.from("students").upsert(students.map(studentToRow))
+    replaceAllEvents(withEvts.events).catch(() => {})
+    return counts
+  }, [setData])
+
+  const importStudentsForPromotion = useCallback((promoId: string, rows: ImportPayload["students"]) => {
+    if (!rows?.length) return 0
+    const newStudents: Student[] = rows.map((s) => ({ id: s.id ?? uid("st"), firstName: s.firstName ?? "", lastName: s.lastName ?? "", email: s.email ?? "", phone: s.phone ?? "", birthday: s.birthday ?? "", classId: s.classId ?? "", promotionId: promoId, status: s.status ?? "active", notes: s.notes ?? "" }))
+    const prev     = dataRef.current
+    const next     = { ...prev, students: [...prev.students, ...newStudents] }
+    const withEvts = { ...next, events: generateSchedule(next) }
+    setData(withEvts)
+
+    supabase.from("students").upsert(newStudents.map(studentToRow))
+    const birthdays = withEvts.events.filter((e) => e.type === "birthday" && newStudents.some((s) => s.id === e.studentId))
+    if (birthdays.length) upsertEvents(birthdays).catch(() => {})
+    return rows.length
+  }, [setData])
+
+  const exportData     = useCallback(() => dataRef.current, [])
+  const loadSeed       = useCallback(() => setData(emptyData()), [setData])
 
   const loadClassTemplate = useCallback(() => {
     const { classes, lessons } = getClassTemplate()
-    mutateAndRegenerate((prev) => ({ ...prev, classes, lessons }))
-  }, [mutateAndRegenerate])
-
-  const repairFellowships = useCallback((promotionId: string) => {
-    setData((prev) => {
-      // Find the date range from lessons for this promotion
-      const lessons = prev.events.filter((e) => e.promotionId === promotionId && e.type === "lesson")
-      if (!lessons.length) return prev
-
-      const dates = lessons.map((e) => e.date).sort()
-      const start = new Date(dates[0] + "T00:00:00")
-      const end = new Date(dates[dates.length - 1] + "T00:00:00")
-      end.setDate(end.getDate() + 14)
-
-      // Build correct Sunday fellowship events
-      const correct: CalendarEvent[] = []
-      const d = new Date(start)
-      while (d.getDay() !== 0) d.setDate(d.getDate() - 1) // rewind to prev Sunday
-      while (d <= end) {
-        const iso = d.toISOString().slice(0, 10)
-        correct.push({ id: `${promotionId}-fellowship-${iso}`, date: iso, type: "fellowship", title: "Sunday Fellowship", description: "Weekly fellowship gathering.", promotionId })
-        d.setDate(d.getDate() + 7)
-      }
-
-      // Remove all fellowship events for this promotion and replace with correct ones
-      return {
-        ...prev,
-        events: [
-          ...prev.events.filter((e) => !(e.promotionId === promotionId && e.type === "fellowship")),
-          ...correct,
-        ],
-      }
-    })
-  }, [])
+    const prev     = dataRef.current
+    const next     = { ...prev, classes, lessons }
+    const withEvts = { ...next, events: generateSchedule(next) }
+    setData(withEvts)
+    supabase.from("classes").upsert(classes.map(classToRow))
+    supabase.from("lessons").upsert(lessons.map(lessonToRow))
+    replaceAllEvents(withEvts.events).catch(() => {})
+  }, [setData])
 
   const resetAll = useCallback(() => {
     setData(emptyData())
-  }, [])
+    Promise.all([
+      supabase.from("promotions").delete().not("id", "is", null),
+      supabase.from("students").delete().not("id", "is", null),
+      supabase.from("classes").delete().not("id", "is", null),
+      supabase.from("lessons").delete().not("id", "is", null),
+      supabase.from("events").delete().not("id", "is", null),
+      supabase.from("meetings").delete().not("id", "is", null),
+      supabase.from("todos").delete().not("id", "is", null),
+    ]).catch(() => toast.error("Failed to clear database."))
+  }, [setData])
 
   const value = useMemo<StoreValue>(
     () => ({
-      data,
-      ready,
-      addPromotion,
-      updatePromotion,
-      deletePromotion,
-      regenerate,
-      addStudent,
-      updateStudent,
-      deleteStudent,
-      updateEvent,
-      repairFellowships,
-      shiftEventsAfter,
-      extendScheduleDay,
-      markLessonDone,
-      postponeLesson,
-      addMeeting,
-      updateMeeting,
-      deleteMeeting,
-      addTodo,
-      toggleTodo,
-      updateTodo,
-      deleteTodo,
-      importData,
-      importStudentsForPromotion,
-      exportData,
-      loadSeed,
-      loadClassTemplate,
-      resetAll,
+      data, ready,
+      addPromotion, updatePromotion, deletePromotion, regenerate,
+      addStudent, updateStudent, deleteStudent,
+      updateEvent, repairFellowships, shiftEventsAfter, extendScheduleDay, markLessonDone, postponeLesson,
+      addMeeting, updateMeeting, deleteMeeting,
+      addTodo, toggleTodo, updateTodo, deleteTodo,
+      importData, importStudentsForPromotion, exportData, loadSeed, loadClassTemplate, resetAll,
     }),
     [
       data, ready,
