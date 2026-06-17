@@ -14,6 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Dialog, DialogContent } from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
 import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react"
 
@@ -24,10 +25,22 @@ export default function CalendarPage() {
   const today = toISO(new Date())
 
   const [promoId, setPromoId]           = useState("all")
+  const selectedPromoName = useMemo(() => {
+    if (promoId === "all") return "All promotions"
+    return data.settings.promotions.find((p) => p.id === promoId)?.name ?? "All promotions"
+  }, [promoId, data.settings.promotions])
   const [viewYear, setViewYear]         = useState(() => new Date().getFullYear())
   const [viewMonth, setViewMonth]       = useState(() => new Date().getMonth())
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [panelOpen, setPanelOpen]       = useState(false)
+  const [isMobile, setIsMobile]         = useState(false)
+
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 1024)
+    checkMobile()
+    window.addEventListener("resize", checkMobile)
+    return () => window.removeEventListener("resize", checkMobile)
+  }, [])
 
   // Support ?date=yyyy-mm-dd deep-link from dashboard
   useEffect(() => {
@@ -118,7 +131,7 @@ export default function CalendarPage() {
             {data.settings.promotions.length > 0 && (
               <Select value={promoId} onValueChange={(v) => setPromoId(v ?? "all")}>
                 <SelectTrigger className="w-auto min-w-44" size="sm">
-                  <SelectValue placeholder="Filter by promotion" />
+                  <SelectValue placeholder="Filter by promotion">{selectedPromoName}</SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All promotions</SelectItem>
@@ -258,7 +271,7 @@ export default function CalendarPage() {
       {/* ── Right sidebar ── */}
       <aside className="w-full shrink-0 border-t border-border bg-card lg:w-80 lg:border-l lg:border-t-0">
         <div className="sticky top-0 max-h-screen overflow-y-auto">
-          {panelOpen && selectedDate ? (
+          {panelOpen && selectedDate && !isMobile ? (
             <EventPanel
               date={selectedDate}
               events={selectedEvents}
@@ -273,6 +286,18 @@ export default function CalendarPage() {
           )}
         </div>
       </aside>
+
+      {isMobile && (
+        <Dialog open={panelOpen && !!selectedDate} onOpenChange={(open) => { if (!open) closePanel() }}>
+          <DialogContent className="max-h-[85vh] overflow-hidden p-0 sm:max-w-md [&>button]:hidden">
+            <EventPanel
+              date={selectedDate}
+              events={selectedEvents}
+              onClose={closePanel}
+            />
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   )
 }

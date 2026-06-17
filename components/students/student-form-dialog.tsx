@@ -47,6 +47,12 @@ export function StudentFormDialog({ open, onOpenChange, student }: Props) {
   const { data, addStudent, updateStudent } = useStore()
   const [draft, setDraft] = useState<Draft>(EMPTY)
 
+  const selectedPromoLabel = draft.promotionId
+    ? data.settings.promotions.find((p) => p.id === draft.promotionId)?.name ?? "Select promotion"
+    : "Unassigned"
+
+  const selectedStatusLabel = draft.status === "active" ? "Active" : "Inactive"
+
   useEffect(() => {
     if (open) setDraft(student ? { ...student } : EMPTY)
   }, [open, student])
@@ -108,7 +114,7 @@ export function StudentFormDialog({ open, onOpenChange, student }: Props) {
                   onValueChange={(v) => set("promotionId", v === "none" ? null : v)}
                 >
                   <SelectTrigger id="promotion">
-                    <SelectValue placeholder="Select promotion" />
+                    <SelectValue placeholder="Select promotion">{selectedPromoLabel}</SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">Unassigned</SelectItem>
@@ -124,7 +130,7 @@ export function StudentFormDialog({ open, onOpenChange, student }: Props) {
                 <Label htmlFor="status">Status</Label>
                 <Select value={draft.status} onValueChange={(v) => set("status", v as Draft["status"])}>
                   <SelectTrigger id="status">
-                    <SelectValue />
+                    <SelectValue>{selectedStatusLabel}</SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="active">Active</SelectItem>

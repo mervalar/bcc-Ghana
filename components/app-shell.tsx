@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button"
 import {
   BookOpen,
   CalendarDays,
+  CheckSquare,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -22,6 +23,7 @@ import {
 const NAV = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/calendar", label: "Calendar", icon: CalendarDays },
+  { href: "/attendance", label: "Attendance", icon: CheckSquare },
   { href: "/students", label: "Students", icon: Users },
   { href: "/meetings", label: "Minutes & Meetings", icon: NotebookPen },
   { href: "/settings", label: "Settings & Import", icon: Settings },

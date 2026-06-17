@@ -19,6 +19,7 @@ import {
 import {
   BookOpen,
   CalendarDays,
+  CheckSquare,
   HandHeart,
   Megaphone,
   Users,
@@ -28,6 +29,7 @@ import {
 } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import { ReportDialog } from "@/components/dashboard/report-dialog"
+import type { Student } from "@/lib/types"
 
 /* ── helpers ── */
 
@@ -39,6 +41,26 @@ function computeStats(events: CalendarEvent[], today: string) {
   const fellowshipsLeft = events.filter((e) => e.type === "fellowship" && e.date >= today).length
   const crusadesLeft   = events.filter((e) => e.type === "crusade"   && e.date >= today).length
   return { lessonsTotal, lessonsDone, lessonsLeft, fellowshipsLeft, crusadesLeft }
+}
+
+function computePromotionAttendance(events: CalendarEvent[], students: Student[], promoId: string): string {
+  const promoStudents = students.filter((s) => s.promotionId === promoId && s.status === "active")
+  if (promoStudents.length === 0) return "0%"
+
+  const doneLessons = events.filter((e) => e.promotionId === promoId && e.type === "lesson" && e.status === "done")
+  if (doneLessons.length === 0) return "—"
+
+  let totalAttended = 0
+  doneLessons.forEach((e) => {
+    const match = e.description?.match(/__ATTENDANCE__\[(.*?)\]/)
+    const presentIds = match ? match[1].split(",").map(id => id.trim()).filter(Boolean) : []
+    const validPresents = presentIds.filter((id) => promoStudents.some((s) => s.id === id))
+    totalAttended += validPresents.length
+  })
+
+  const totalPossible = promoStudents.length * doneLessons.length
+  const pct = Math.round((totalAttended / totalPossible) * 100)
+  return `${pct}%`
 }
 
 /* ── page ── */
@@ -57,12 +79,14 @@ export default function DashboardPage() {
       const evs = filterByPromotion(data.events, promoId)
       const students = data.students.filter((s) => s.promotionId === promoId).length
       const color = getPromoColor(promoId, data.settings.promotions)
-      return [{ id: promoId, name: promo?.name ?? "Overview", students, color, ...computeStats(evs, today) }]
+      const attendanceRate = computePromotionAttendance(evs, data.students, promoId)
+      return [{ id: promoId, name: promo?.name ?? "Overview", students, color, attendanceRate, ...computeStats(evs, today) }]
     }
     return data.settings.promotions.map((p, i) => {
       const evs = data.events.filter((e) => e.promotionId === p.id)
       const students = data.students.filter((s) => s.promotionId === p.id).length
-      return { id: p.id, name: p.name, students, color: promoColorByIndex(i), ...computeStats(evs, today) }
+      const attendanceRate = computePromotionAttendance(evs, data.students, p.id)
+      return { id: p.id, name: p.name, students, color: promoColorByIndex(i), attendanceRate, ...computeStats(evs, today) }
     })
   }, [promoId, data.events, data.students, data.settings.promotions, today])
 
@@ -118,7 +142,7 @@ export default function DashboardPage() {
             {data.settings.promotions.length > 0 && (
               <Select value={promoId} onValueChange={(v) => setPromoId(v ?? "all")}>
                 <SelectTrigger className="w-auto min-w-44" size="sm">
-                  <SelectValue placeholder="Filter by promotion" />
+                  <SelectValue placeholder="Filter by promotion">{selectedPromoName}</SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All promotions</SelectItem>
@@ -136,12 +160,13 @@ export default function DashboardPage() {
 
         {/* ── Stats ── */}
         {promoId !== "all" ? (
-          /* Single promotion — 4 cards */
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+          /* Single promotion — 5 cards */
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-5">
             <StatCard icon={Users}     label="Students in promo" value={statsRows[0].students} />
             <LessonStatCard total={statsRows[0].lessonsTotal} left={statsRows[0].lessonsLeft} done={statsRows[0].lessonsDone} />
             <StatCard icon={HandHeart} label="Fellowships left"  value={statsRows[0].fellowshipsLeft} />
             <StatCard icon={Megaphone} label="Crusades left"     value={statsRows[0].crusadesLeft} />
+            <StatCard icon={CheckSquare} label="Avg Attendance"  value={statsRows[0].attendanceRate} />
           </div>
         ) : (
           /* All promotions — per-promo breakdown */
@@ -152,11 +177,12 @@ export default function DashboardPage() {
                   <div className="border-b border-border bg-muted/30 px-4 py-2.5">
                     <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: row.color.textDark }}>{row.name}</p>
                   </div>
-                  <div className="grid grid-cols-4 divide-x divide-border">
+                  <div className="grid grid-cols-5 divide-x divide-border">
                     <MiniStat icon={Users}     label="Students"         value={row.students} />
                     <MiniStat icon={BookOpen}  label="Lessons left"     value={row.lessonsLeft} sub={`of ${row.lessonsTotal}`} />
                     <MiniStat icon={HandHeart} label="Fellowships left" value={row.fellowshipsLeft} />
                     <MiniStat icon={Megaphone} label="Crusades left"    value={row.crusadesLeft} />
+                    <MiniStat icon={CheckSquare} label="Attendance"     value={row.attendanceRate} />
                   </div>
                 </div>
               ))}
@@ -203,7 +229,7 @@ export default function DashboardPage() {
 
 /* ── Stat cards ── */
 
-function StatCard({ icon: Icon, label, value, wide }: { icon: LucideIcon; label: string; value: number; wide?: boolean }) {
+function StatCard({ icon: Icon, label, value, wide }: { icon: LucideIcon; label: string; value: string | number; wide?: boolean }) {
   return (
     <div className={cn("flex items-center gap-3 rounded-xl border border-border bg-card p-4", wide && "sm:col-span-4")}>
       <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
@@ -248,7 +274,7 @@ function LessonStatCard({ total, left, done }: { total: number; left: number; do
   )
 }
 
-function MiniStat({ icon: Icon, label, value, sub }: { icon: LucideIcon; label: string; value: number; sub?: string }) {
+function MiniStat({ icon: Icon, label, value, sub }: { icon: LucideIcon; label: string; value: string | number; sub?: string }) {
   return (
     <div className="flex flex-col items-center gap-1 px-3 py-3 text-center">
       <Icon className="size-4 text-primary" aria-hidden="true" />

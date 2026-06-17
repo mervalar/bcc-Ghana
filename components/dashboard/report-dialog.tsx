@@ -35,9 +35,9 @@ interface PromoStats {
 
 function buildPromoStats(data: AppData): PromoStats[] {
   return data.settings.promotions.map((promo) => {
-    const students   = data.students.filter((s) => s.promotionId === promo.id)
+    const students = data.students.filter((s) => s.promotionId === promo.id)
     const lessonEvts = data.events.filter((e) => e.promotionId === promo.id && e.type === "lesson")
-    const sorted     = [...lessonEvts].sort((a, b) => b.date.localeCompare(a.date))
+    const sorted = [...lessonEvts].sort((a, b) => b.date.localeCompare(a.date))
 
     const classIds = [...new Set(lessonEvts.map((e) => e.classId).filter(Boolean))] as string[]
     let classesFinished = 0
@@ -47,39 +47,39 @@ function buildPromoStats(data: AppData): PromoStats[] {
     }
 
     return {
-      id:              promo.id,
-      name:            promo.name,
-      startDate:       promo.scheduleStartDate,
-      estimatedEnd:    sorted[0]?.date ?? null,
-      studentCount:    students.length,
-      studentNames:    students.map((s) => `${s.firstName} ${s.lastName}`),
-      classesTotal:    classIds.length,
+      id: promo.id,
+      name: promo.name,
+      startDate: promo.scheduleStartDate,
+      estimatedEnd: sorted[0]?.date ?? null,
+      studentCount: students.length,
+      studentNames: students.map((s) => `${s.firstName} ${s.lastName}`),
+      classesTotal: classIds.length,
       classesFinished,
-      classesLeft:     classIds.length - classesFinished,
-      lessonsTotal:    lessonEvts.length,
-      lessonsDone:     lessonEvts.filter((e) => e.status === "done").length,
-      lessonsLeft:     lessonEvts.filter((e) => e.status !== "done").length,
+      classesLeft: classIds.length - classesFinished,
+      lessonsTotal: lessonEvts.length,
+      lessonsDone: lessonEvts.filter((e) => e.status === "done").length,
+      lessonsLeft: lessonEvts.filter((e) => e.status !== "done").length,
     }
   })
 }
 
 function buildInitialHTML(data: AppData, stats: PromoStats[], today: string): string {
   const totStudents = data.students.length
-  const totLessons  = data.events.filter((e) => e.type === "lesson").length
-  const totDone     = data.events.filter((e) => e.type === "lesson" && e.status === "done").length
+  const totLessons = data.events.filter((e) => e.type === "lesson").length
+  const totDone = data.events.filter((e) => e.type === "lesson" && e.status === "done").length
 
   const promoBlocks = stats.map((s) => `
     <h2>${s.name}</h2>
     <ul>
-      <li><strong>Start date:</strong> ${fmt(s.startDate)}</li>
-      <li><strong>Estimated end date:</strong> ${s.estimatedEnd ? fmt(s.estimatedEnd) : "—"}</li>
-      <li><strong>Students:</strong> ${s.studentCount}</li>
-      <li><strong>Total classes:</strong> ${s.classesTotal}</li>
-      <li><strong>Classes finished:</strong> ${s.classesFinished}</li>
-      <li><strong>Classes left:</strong> ${s.classesLeft}</li>
-      <li><strong>Total lessons:</strong> ${s.lessonsTotal}</li>
-      <li><strong>Lessons done:</strong> ${s.lessonsDone}</li>
-      <li><strong>Lessons left:</strong> ${s.lessonsLeft}</li>
+      <li><strong>Start Date</strong>${fmt(s.startDate)}</li>
+      <li><strong>Estimated End</strong>${s.estimatedEnd ? fmt(s.estimatedEnd) : "—"}</li>
+      <li><strong>Students</strong>${s.studentCount}</li>
+      <li><strong>Total Classes</strong>${s.classesTotal}</li>
+      <li><strong>Classes Finished</strong>${s.classesFinished}</li>
+      <li><strong>Classes Left</strong>${s.classesLeft}</li>
+      <li><strong>Total Lessons</strong>${s.lessonsTotal}</li>
+      <li><strong>Lessons Done</strong>${s.lessonsDone}</li>
+      <li><strong>Lessons Left</strong>${s.lessonsLeft}</li>
     </ul>
     ${s.studentNames.length > 0 ? `
     <h3>Students (${s.studentCount})</h3>
@@ -87,15 +87,15 @@ function buildInitialHTML(data: AppData, stats: PromoStats[], today: string): st
   `).join("")
 
   return `
-    <h1>Bible Study — Project Report</h1>
+    <h1>BCC Ghana — Project Report</h1>
     <p><em>Generated on ${fmt(today)} · ${stats.length} promotion${stats.length !== 1 ? "s" : ""}</em></p>
 
     <h2>Overview</h2>
     <ul>
-      <li><strong>Total promotions:</strong> ${stats.length}</li>
-      <li><strong>Total students:</strong> ${totStudents}</li>
-      <li><strong>Lessons done:</strong> ${totDone}</li>
-      <li><strong>Lessons left:</strong> ${totLessons - totDone}</li>
+      <li><strong>Total Promotions</strong>${stats.length}</li>
+      <li><strong>Total Students</strong>${totStudents}</li>
+      <li><strong>Lessons Done</strong>${totDone}</li>
+      <li><strong>Lessons Left</strong>${totLessons - totDone}</li>
     </ul>
 
     ${promoBlocks}
@@ -182,16 +182,16 @@ interface Props {
 }
 
 export function ReportDialog({ open, onOpenChange, data }: Props) {
-  const today       = toISO(new Date())
-  const stats       = buildPromoStats(data)
-  const contentRef  = useRef<HTMLDivElement>(null)
+  const today = toISO(new Date())
+  const stats = buildPromoStats(data)
+  const contentRef = useRef<HTMLDivElement>(null)
 
   const editor = useEditor({
     extensions: [StarterKit],
     content: buildInitialHTML(data, stats, today),
     editorProps: {
       attributes: {
-        class: "prose prose-sm max-w-none focus:outline-none min-h-[400px] px-6 py-5 text-foreground",
+        class: "prose prose-slate max-w-none focus:outline-none text-slate-800",
       },
     },
   })
@@ -211,13 +211,13 @@ export function ReportDialog({ open, onOpenChange, data }: Props) {
       backgroundColor: "#ffffff",
     })
 
-    const pdf      = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" })
-    const pageW    = pdf.internal.pageSize.getWidth()
-    const pageH    = pdf.internal.pageSize.getHeight()
-    const margin   = 10
-    const imgW     = pageW - margin * 2
-    const imgH     = (canvas.height * imgW) / canvas.width
-    const imgData  = canvas.toDataURL("image/png")
+    const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" })
+    const pageW = pdf.internal.pageSize.getWidth()
+    const pageH = pdf.internal.pageSize.getHeight()
+    const margin = 10
+    const imgW = pageW - margin * 2
+    const imgH = (canvas.height * imgW) / canvas.width
+    const imgData = canvas.toDataURL("image/png")
 
     let y = margin
     let heightLeft = imgH
@@ -237,7 +237,7 @@ export function ReportDialog({ open, onOpenChange, data }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[90vh] flex-col gap-0 p-0 sm:max-w-3xl">
+      <DialogContent className="flex max-h-[90vh] flex-col gap-0 p-0 sm:max-w-4xl">
         <DialogHeader className="border-b border-border px-6 py-4">
           <DialogTitle className="flex items-center gap-2">
             <FileText className="size-4 text-primary" aria-hidden="true" />
@@ -248,8 +248,8 @@ export function ReportDialog({ open, onOpenChange, data }: Props) {
 
         <Toolbar editor={editor} />
 
-        <div className="flex-1 overflow-y-auto">
-          <div ref={contentRef} className="bg-white">
+        <div className="flex-1 overflow-y-auto bg-slate-100/50 p-6">
+          <div ref={contentRef} className="report-content mx-auto max-w-[800px] bg-white p-12 shadow-md border border-slate-200/80 min-h-[1000px] rounded-md">
             <EditorContent editor={editor} />
           </div>
         </div>

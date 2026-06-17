@@ -39,7 +39,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { toast } from "sonner"
-import { MoreHorizontal, Pencil, Plus, Search, Trash2, UserRound, Users } from "lucide-react"
+import { MoreHorizontal, Pencil, Plus, Search, Trash2, Upload, UserRound, Users } from "lucide-react"
 import { getPromoColor } from "@/lib/promo-colors"
 
 function formatBirthday(iso: string): string {
@@ -61,6 +61,12 @@ export default function StudentsPage() {
     for (const p of data.settings.promotions) map.set(p.id, p.name)
     return map
   }, [data.settings.promotions])
+
+  const selectedPromoFilterName = useMemo(() => {
+    if (promoFilter === "all") return "All promotions"
+    if (promoFilter === "unassigned") return "Unassigned"
+    return data.settings.promotions.find((p) => p.id === promoFilter)?.name ?? "All promotions"
+  }, [promoFilter, data.settings.promotions])
 
   const promoColorById = useMemo(() => {
     const map = new Map<string, ReturnType<typeof getPromoColor>>()
@@ -112,10 +118,16 @@ export default function StudentsPage() {
   return (
     <div className="flex flex-col">
       <PageHeader title="Students" description="Manage everyone enrolled in the promotions.">
-        <Button onClick={openCreate} className="gap-2">
-          <Plus className="size-4" aria-hidden="true" />
-          Add student
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => window.location.href = '/settings'} className="gap-2">
+            <Upload className="size-4" aria-hidden="true" />
+            Import students
+          </Button>
+          <Button onClick={openCreate} className="gap-2">
+            <Plus className="size-4" aria-hidden="true" />
+            Add student
+          </Button>
+        </div>
       </PageHeader>
 
       <div className="flex flex-col gap-4 p-6">
@@ -164,7 +176,7 @@ export default function StudentsPage() {
           </div>
           <Select value={promoFilter} onValueChange={(v) => setPromoFilter(v ?? "all")}>
             <SelectTrigger className="w-auto min-w-44" size="sm">
-              <SelectValue placeholder="All promotions" />
+              <SelectValue placeholder="All promotions">{selectedPromoFilterName}</SelectValue>
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All promotions</SelectItem>
@@ -204,7 +216,7 @@ export default function StudentsPage() {
                 <TableRow>
                   <TableCell colSpan={7} className="py-12 text-center text-sm text-muted-foreground">
                     {data.students.length === 0
-                      ? "No students yet. Add one or import a JSON file from Settings."
+                      ? "No students yet. Add one or click Import Students to upload your list from Settings."
                       : "No students match your search."}
                   </TableCell>
                 </TableRow>

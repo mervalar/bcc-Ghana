@@ -98,7 +98,13 @@ function PromotionDialog({
           </div>
 
           <div className="flex flex-col gap-2">
-            <Label>Import students <span className="font-normal text-muted-foreground">(optional)</span></Label>
+            <Label>
+              Import students {initial ? (
+                <span className="font-normal text-muted-foreground">(optional)</span>
+              ) : (
+                <span className="text-destructive font-bold">*</span>
+              )}
+            </Label>
             <input ref={fileRef} type="file" accept="application/json,.json,.csv,text/csv" onChange={onFile} className="hidden" />
             {students.length === 0 ? (
               <Button type="button" variant="outline" size="sm" onClick={() => fileRef.current?.click()} className="gap-2 self-start">
@@ -116,12 +122,15 @@ function PromotionDialog({
                 </button>
               </div>
             )}
+            {!initial && students.length === 0 && (
+              <p className="text-[11px] text-destructive">A student list file (CSV or JSON) is required to add a new promotion.</p>
+            )}
           </div>
         </div>
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={handleSave} disabled={!name.trim() || !startDate} className="gap-2">
+          <Button onClick={handleSave} disabled={!name.trim() || !startDate || (!initial && students.length === 0)} className="gap-2">
             <Save className="size-4" aria-hidden="true" />
             {initial ? "Save changes" : "Add promotion"}
           </Button>
@@ -207,19 +216,23 @@ export default function SettingsPage() {
 
   /* ── Promotion handlers ── */
 
-  const handleSavePromotion = (name: string, startDate: string, students: StudentRow[]) => {
+  const handleSavePromotion = async (name: string, startDate: string, students: StudentRow[]) => {
     if (editingPromo) {
       updatePromotion(editingPromo.id, { name, scheduleStartDate: startDate })
-      if (students.length > 0) importStudentsForPromotion(editingPromo.id, students)
+      if (students.length > 0) await importStudentsForPromotion(editingPromo.id, students)
       toast.success("Promotion updated.")
     } else {
-      const id = addPromotion({ name, scheduleStartDate: startDate })
-      if (data.classes.length === 0) loadClassTemplate()
-      if (students.length > 0) {
-        importStudentsForPromotion(id, students)
-        toast.success(`Promotion added with ${students.length} student(s) imported.`)
-      } else {
-        toast.success("Promotion added and schedule generated.")
+      try {
+        const id = await addPromotion({ name, scheduleStartDate: startDate })
+        if (data.classes.length === 0) loadClassTemplate()
+        if (students.length > 0) {
+          await importStudentsForPromotion(id, students)
+          toast.success(`Promotion added with ${students.length} student(s) imported.`)
+        } else {
+          toast.success("Promotion added and schedule generated.")
+        }
+      } catch (err) {
+        console.error("Failed to add promotion or import students", err)
       }
     }
     setEditingPromo(null)
@@ -254,7 +267,7 @@ export default function SettingsPage() {
         students = Array.isArray(parsed) ? parsed : parsed.students
         if (!Array.isArray(students)) throw new Error("Expected a students array.")
       }
-      const count = importStudentsForPromotion(importingPromoId, students)
+      const count = await importStudentsForPromotion(importingPromoId, students)
       const promoName = data.settings.promotions.find((p) => p.id === importingPromoId)?.name ?? ""
       toast.success(`${count} student${count !== 1 ? "s" : ""} imported into "${promoName}".`)
     } catch (err) {

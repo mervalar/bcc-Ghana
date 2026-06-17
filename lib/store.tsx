@@ -28,7 +28,7 @@ function emptyData(): AppData {
 interface StoreValue {
   data: AppData
   ready: boolean
-  addPromotion: (p: Omit<Promotion, "id">) => string
+  addPromotion: (p: Omit<Promotion, "id">) => Promise<string>
   updatePromotion: (id: string, next: Partial<Promotion>) => void
   deletePromotion: (id: string) => void
   regenerate: () => void
@@ -49,7 +49,7 @@ interface StoreValue {
   markLessonDone: (id: string) => void
   postponeLesson: (id: string) => void
   importData: (payload: ImportPayload) => { students: number; classes: number; lessons: number }
-  importStudentsForPromotion: (promoId: string, students: ImportPayload["students"]) => number
+  importStudentsForPromotion: (promoId: string, students: ImportPayload["students"]) => Promise<number>
   exportData: () => AppData
   loadSeed: () => void
   loadClassTemplate: () => void
@@ -112,12 +112,19 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     const withEvts  = { ...next, events: generateSchedule(next) }
     setData(withEvts)
 
-    supabase.from("promotions").insert(promotionToRow(promotion))
-      .then(({ error }) => { if (error) toast.error("Failed to save promotion.") })
     const promoEvts = withEvts.events.filter((e) => e.promotionId === id)
-    if (promoEvts.length) upsertEvents(promoEvts).catch(() => toast.error("Failed to sync events."))
+    const syncEventsPromise = promoEvts.length 
+      ? upsertEvents(promoEvts).catch(() => toast.error("Failed to sync events."))
+      : Promise.resolve()
 
-    return id
+    return supabase.from("promotions").insert(promotionToRow(promotion))
+      .then(({ error }) => {
+        if (error) {
+          toast.error("Failed to save promotion.")
+          throw error
+        }
+        return syncEventsPromise.then(() => id)
+      })
   }, [setData])
 
   const updatePromotion = useCallback((id: string, patch: Partial<Promotion>) => {
@@ -135,15 +142,28 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const deletePromotion = useCallback((id: string) => {
     const prev = dataRef.current
+    const studentsToDelete = prev.students.filter((s) => s.promotionId === id)
+    const studentIds = studentsToDelete.map((s) => s.id)
+
     setData({
       ...prev,
       settings: { promotions: prev.settings.promotions.filter((p) => p.id !== id) },
       students:  prev.students.filter((s) => s.promotionId !== id),
-      events:    prev.events.filter((e) => e.promotionId !== id),
+      events:    prev.events.filter((e) => e.promotionId !== id && (!e.studentId || !studentIds.includes(e.studentId))),
     })
-    supabase.from("promotions").delete().eq("id", id)
-    supabase.from("students").delete().eq("promotion_id", id)
-    supabase.from("events").delete().eq("promotion_id", id)
+
+    // Delete birthday events of these students first, then other events of the promotion, then students, then promotion
+    let deletePromise: PromiseLike<unknown> = supabase.from("events").delete().eq("promotion_id", id)
+    if (studentIds.length > 0) {
+      deletePromise = deletePromise.then(() =>
+        supabase.from("events").delete().in("student_id", studentIds)
+      )
+    }
+
+    deletePromise
+      .then(() => supabase.from("students").delete().eq("promotion_id", id))
+      .then(() => supabase.from("promotions").delete().eq("id", id))
+      .then(({ error }) => { if (error) toast.error("Failed to delete promotion in database: " + error.message) })
   }, [setData])
 
   const regenerate = useCallback(() => {
@@ -189,8 +209,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     const next     = { ...prev, students: prev.students.filter((x) => x.id !== id) }
     const withEvts = { ...next, events: generateSchedule(next) }
     setData(withEvts)
-    supabase.from("students").delete().eq("id", id)
+
+    // Delete child events first (e.g. birthdays), then delete student
     supabase.from("events").delete().eq("student_id", id)
+      .then(() => supabase.from("students").delete().eq("id", id))
+      .then(({ error }) => { if (error) toast.error("Failed to delete student in database: " + error.message) })
   }, [setData])
 
   /* ── Events ── */
@@ -335,6 +358,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     const prev = dataRef.current
     setData({ ...prev, meetings: prev.meetings.filter((x) => x.id !== id), todos: prev.todos.filter((t) => t.meetingId !== id) })
     supabase.from("meetings").delete().eq("id", id) // todos cascade-deleted by Supabase FK
+      .then(({ error }) => { if (error) toast.error("Failed to delete meeting in database: " + error.message) })
   }, [setData])
 
   /* ── Todos ── */
@@ -365,6 +389,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     const prev = dataRef.current
     setData({ ...prev, todos: prev.todos.filter((t) => t.id !== id) })
     supabase.from("todos").delete().eq("id", id)
+      .then(({ error }) => { if (error) toast.error("Failed to delete todo in database: " + error.message) })
   }, [setData])
 
   /* ── Data management ── */
@@ -394,17 +419,27 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   }, [setData])
 
   const importStudentsForPromotion = useCallback((promoId: string, rows: ImportPayload["students"]) => {
-    if (!rows?.length) return 0
+    if (!rows?.length) return Promise.resolve(0)
     const newStudents: Student[] = rows.map((s) => ({ id: s.id ?? uid("st"), firstName: s.firstName ?? "", lastName: s.lastName ?? "", email: s.email ?? "", phone: s.phone ?? "", birthday: s.birthday ?? "", classId: s.classId ?? "", promotionId: promoId, status: s.status ?? "active", notes: s.notes ?? "" }))
     const prev     = dataRef.current
     const next     = { ...prev, students: [...prev.students, ...newStudents] }
     const withEvts = { ...next, events: generateSchedule(next) }
     setData(withEvts)
 
-    supabase.from("students").upsert(newStudents.map(studentToRow))
-    const birthdays = withEvts.events.filter((e) => e.type === "birthday" && newStudents.some((s) => s.id === e.studentId))
-    if (birthdays.length) upsertEvents(birthdays).catch(() => {})
-    return rows.length
+    return supabase.from("students").upsert(newStudents.map(studentToRow))
+      .then(({ error }) => {
+        if (error) {
+          toast.error("Failed to import students to database: " + error.message)
+          throw error
+        }
+        const birthdays = withEvts.events.filter((e) => e.type === "birthday" && newStudents.some((s) => s.id === e.studentId))
+        if (birthdays.length) {
+          return upsertEvents(birthdays)
+            .then(() => rows.length)
+            .catch(() => rows.length)
+        }
+        return rows.length
+      })
   }, [setData])
 
   const exportData     = useCallback(() => dataRef.current, [])

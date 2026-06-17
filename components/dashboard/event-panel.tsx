@@ -127,8 +127,8 @@ function EventDetail({
       <div className="flex flex-1 flex-col divide-y divide-border">
         <DetailRow label="Date" value={formattedDate} />
         <DetailRow label="Title" value={event.title} />
-        {event.description && (
-          <DetailRow label="Description" value={event.description} multiline />
+        {event.description?.replace(/__ATTENDANCE__\[.*?\]/g, "").trim() && (
+          <DetailRow label="Description" value={event.description.replace(/__ATTENDANCE__\[.*?\]/g, "").trim()} multiline />
         )}
       </div>
 

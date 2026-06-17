@@ -27,8 +27,8 @@ export function LoginScreen() {
             <BookOpen className="size-7" aria-hidden="true" />
           </div>
           <div>
-            <h1 className="text-xl font-semibold tracking-tight text-foreground">Bcc ghana Manager</h1>
-            <p className="text-sm text-muted-foreground">Promotion 2026–2027</p>
+            <h1 className="text-xl font-semibold tracking-tight text-foreground">BCC GHANA</h1>
+            <p className="text-sm text-muted-foreground">BCC GHANA Manager</p>
           </div>
         </div>
 
@@ -43,7 +43,7 @@ export function LoginScreen() {
               autoComplete="username"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              placeholder="admin"
+              placeholder="Username"
               required
             />
           </div>
@@ -71,9 +71,7 @@ export function LoginScreen() {
             Sign in
           </Button>
 
-          <p className="text-center text-xs text-muted-foreground">
-            Default login: <span className="font-medium text-foreground">admin / admin</span>
-          </p>
+
         </form>
       </div>
     </main>

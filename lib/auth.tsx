@@ -18,7 +18,10 @@ interface AuthContextValue {
 
 const CREDS_KEY = "bsm:creds"
 const SESSION_KEY = "bsm:session"
-const DEFAULT_CREDS: Credentials = { username: "admin", password: "admin" }
+const DEFAULT_CREDS: Credentials = {
+  username: process.env.NEXT_PUBLIC_ADMIN_USERNAME ?? "",
+  password: process.env.NEXT_PUBLIC_ADMIN_PASSWORD ?? "",
+}
 
 const AuthContext = createContext<AuthContextValue | null>(null)
 
