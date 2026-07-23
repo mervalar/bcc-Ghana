@@ -33,12 +33,13 @@ function PromotionDialog({
   open: boolean
   onOpenChange: (o: boolean) => void
   initial?: Promotion
-  onSave: (name: string, startDate: string, students: StudentRow[]) => void
+  onSave: (name: string, startDate: string, students: StudentRow[]) => Promise<void>
 }) {
   const [name, setName]           = useState("")
   const [startDate, setStartDate] = useState("")
   const [students, setStudents]   = useState<StudentRow[]>([])
   const [fileName, setFileName]   = useState("")
+  const [saving, setSaving]       = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -47,6 +48,7 @@ function PromotionDialog({
       setStartDate(initial?.scheduleStartDate ?? "")
       setStudents([])
       setFileName("")
+      setSaving(false)
     }
   }, [open, initial?.id])
 
@@ -72,14 +74,21 @@ function PromotionDialog({
     }
   }
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!name.trim() || !startDate) return
-    onSave(name.trim(), startDate, students)
-    onOpenChange(false)
+    setSaving(true)
+    try {
+      await onSave(name.trim(), startDate, students)
+      onOpenChange(false)
+    } catch (err) {
+      // Error is caught, toasted and logged in the parent page's handler
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(o) => { if (!saving) onOpenChange(o) }}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{initial ? "Edit promotion" : "New promotion"}</DialogTitle>
@@ -88,12 +97,12 @@ function PromotionDialog({
         <div className="flex flex-col gap-4 py-1">
           <div className="flex flex-col gap-2">
             <Label htmlFor="pd-name">Promotion name</Label>
-            <Input id="pd-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Promotion 2026–2027" />
+            <Input id="pd-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Promotion 2026–2027" disabled={saving} />
           </div>
 
           <div className="flex flex-col gap-2">
             <Label htmlFor="pd-date">Schedule start date</Label>
-            <Input id="pd-date" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+            <Input id="pd-date" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} disabled={saving} />
             <p className="text-[11px] text-muted-foreground">Lessons begin on the first Friday on or after this date.</p>
           </div>
 
@@ -105,9 +114,9 @@ function PromotionDialog({
                 <span className="text-destructive font-bold">*</span>
               )}
             </Label>
-            <input ref={fileRef} type="file" accept="application/json,.json,.csv,text/csv" onChange={onFile} className="hidden" />
+            <input ref={fileRef} type="file" accept="application/json,.json,.csv,text/csv" onChange={onFile} className="hidden" disabled={saving} />
             {students.length === 0 ? (
-              <Button type="button" variant="outline" size="sm" onClick={() => fileRef.current?.click()} className="gap-2 self-start">
+              <Button type="button" variant="outline" size="sm" onClick={() => fileRef.current?.click()} className="gap-2 self-start" disabled={saving}>
                 <Upload className="size-4" aria-hidden="true" />
                 Choose file (CSV or JSON)
               </Button>
@@ -117,7 +126,7 @@ function PromotionDialog({
                 <span className="min-w-0 flex-1 truncate text-xs text-foreground">
                   <span className="font-semibold">{students.length}</span> student{students.length !== 1 ? "s" : ""} — {fileName}
                 </span>
-                <button type="button" onClick={() => { setStudents([]); setFileName(""); if (fileRef.current) fileRef.current.value = "" }} className="shrink-0 text-muted-foreground hover:text-foreground" aria-label="Remove file">
+                <button type="button" onClick={() => { setStudents([]); setFileName(""); if (fileRef.current) fileRef.current.value = "" }} className="shrink-0 text-muted-foreground hover:text-foreground" aria-label="Remove file" disabled={saving}>
                   <X className="size-4" />
                 </button>
               </div>
@@ -129,10 +138,14 @@ function PromotionDialog({
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={handleSave} disabled={!name.trim() || !startDate || (!initial && students.length === 0)} className="gap-2">
-            <Save className="size-4" aria-hidden="true" />
-            {initial ? "Save changes" : "Add promotion"}
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancel</Button>
+          <Button onClick={handleSave} disabled={saving || !name.trim() || !startDate || (!initial && students.length === 0)} className="gap-2">
+            {saving ? (
+              <span className="size-4 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent" />
+            ) : (
+              <Save className="size-4" aria-hidden="true" />
+            )}
+            {saving ? "Saving..." : initial ? "Save changes" : "Add promotion"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -217,12 +230,14 @@ export default function SettingsPage() {
   /* ── Promotion handlers ── */
 
   const handleSavePromotion = async (name: string, startDate: string, students: StudentRow[]) => {
-    if (editingPromo) {
-      updatePromotion(editingPromo.id, { name, scheduleStartDate: startDate })
-      if (students.length > 0) await importStudentsForPromotion(editingPromo.id, students)
-      toast.success("Promotion updated.")
-    } else {
-      try {
+    try {
+      if (editingPromo) {
+        updatePromotion(editingPromo.id, { name, scheduleStartDate: startDate })
+        if (students.length > 0) {
+          await importStudentsForPromotion(editingPromo.id, students)
+        }
+        toast.success("Promotion updated.")
+      } else {
         const id = await addPromotion({ name, scheduleStartDate: startDate })
         if (data.classes.length === 0) loadClassTemplate()
         if (students.length > 0) {
@@ -231,11 +246,23 @@ export default function SettingsPage() {
         } else {
           toast.success("Promotion added and schedule generated.")
         }
-      } catch (err) {
-        console.error("Failed to add promotion or import students", err)
       }
+      setEditingPromo(null)
+    } catch (err) {
+      console.error("Failed to save promotion or import students:", err)
+      
+      let errMsg = "An unknown error occurred."
+      if (err instanceof Error) {
+        errMsg = err.message
+      } else if (err && typeof err === "object") {
+        errMsg = (err as any).message || (err as any).details || JSON.stringify(err)
+      } else {
+        errMsg = String(err)
+      }
+
+      toast.error(`Failed to save promotion/students: ${errMsg}`)
+      throw err
     }
-    setEditingPromo(null)
   }
 
   const handleDeletePromotion = (p: Promotion) => {

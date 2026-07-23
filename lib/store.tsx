@@ -104,7 +104,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   /* ── Promotions ── */
 
-  const addPromotion = useCallback((p: Omit<Promotion, "id">) => {
+  const addPromotion = useCallback(async (p: Omit<Promotion, "id">) => {
     const id        = uid("promo")
     const promotion = { ...p, id }
     const prev      = dataRef.current
@@ -112,19 +112,21 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     const withEvts  = { ...next, events: generateSchedule(next) }
     setData(withEvts)
 
-    const promoEvts = withEvts.events.filter((e) => e.promotionId === id)
-    const syncEventsPromise = promoEvts.length 
-      ? upsertEvents(promoEvts).catch(() => toast.error("Failed to sync events."))
-      : Promise.resolve()
+    const { error } = await supabase.from("promotions").insert(promotionToRow(promotion))
+    if (error) {
+      toast.error("Failed to save promotion.")
+      throw error
+    }
 
-    return supabase.from("promotions").insert(promotionToRow(promotion))
-      .then(({ error }) => {
-        if (error) {
-          toast.error("Failed to save promotion.")
-          throw error
-        }
-        return syncEventsPromise.then(() => id)
-      })
+    const promoEvts = withEvts.events.filter((e) => e.promotionId === id)
+    if (promoEvts.length) {
+      try {
+        await upsertEvents(promoEvts)
+      } catch {
+        toast.error("Failed to sync events.")
+      }
+    }
+    return id
   }, [setData])
 
   const updatePromotion = useCallback((id: string, patch: Partial<Promotion>) => {
@@ -418,28 +420,29 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     return counts
   }, [setData])
 
-  const importStudentsForPromotion = useCallback((promoId: string, rows: ImportPayload["students"]) => {
-    if (!rows?.length) return Promise.resolve(0)
+  const importStudentsForPromotion = useCallback(async (promoId: string, rows: ImportPayload["students"]) => {
+    if (!rows?.length) return 0
     const newStudents: Student[] = rows.map((s) => ({ id: s.id ?? uid("st"), firstName: s.firstName ?? "", lastName: s.lastName ?? "", email: s.email ?? "", phone: s.phone ?? "", birthday: s.birthday ?? "", classId: s.classId ?? "", promotionId: promoId, status: s.status ?? "active", notes: s.notes ?? "" }))
     const prev     = dataRef.current
     const next     = { ...prev, students: [...prev.students, ...newStudents] }
     const withEvts = { ...next, events: generateSchedule(next) }
     setData(withEvts)
 
-    return supabase.from("students").upsert(newStudents.map(studentToRow))
-      .then(({ error }) => {
-        if (error) {
-          toast.error("Failed to import students to database: " + error.message)
-          throw error
-        }
-        const birthdays = withEvts.events.filter((e) => e.type === "birthday" && newStudents.some((s) => s.id === e.studentId))
-        if (birthdays.length) {
-          return upsertEvents(birthdays)
-            .then(() => rows.length)
-            .catch(() => rows.length)
-        }
-        return rows.length
-      })
+    const { error } = await supabase.from("students").upsert(newStudents.map(studentToRow))
+    if (error) {
+      toast.error("Failed to import students to database: " + error.message)
+      throw error
+    }
+
+    const birthdays = withEvts.events.filter((e) => e.type === "birthday" && newStudents.some((s) => s.id === e.studentId))
+    if (birthdays.length) {
+      try {
+        await upsertEvents(birthdays)
+      } catch {
+        // failed to sync birthdays, but continue
+      }
+    }
+    return rows.length
   }, [setData])
 
   const exportData     = useCallback(() => dataRef.current, [])
