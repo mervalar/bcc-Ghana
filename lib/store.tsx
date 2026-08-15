@@ -368,6 +368,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     setData({ ...prev, events })
     const updated = events.find((e) => e.id === id)
     if (updated) supabase.from("events").upsert(eventToRow(updated))
+      .then(({ error }) => { if (error) toast.error("Failed to update event in database.") })
   }, [setData])
 
   const postponeLesson = useCallback((id: string) => {
@@ -512,12 +513,14 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     setData({ ...prev, todos })
     const updated = todos.find((t) => t.id === id)
     if (updated) supabase.from("todos").update({ done: updated.done }).eq("id", id)
+      .then(({ error }) => { if (error) toast.error("Failed to update todo in database.") })
   }, [setData])
 
   const updateTodo = useCallback((id: string, text: string) => {
     const prev = dataRef.current
     setData({ ...prev, todos: prev.todos.map((t) => (t.id === id ? { ...t, text } : t)) })
     supabase.from("todos").update({ text }).eq("id", id)
+      .then(({ error }) => { if (error) toast.error("Failed to update todo in database.") })
   }, [setData])
 
   const deleteTodo = useCallback((id: string) => {
@@ -547,8 +550,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     setData(withEvts)
 
     if (payload.classes)  supabase.from("classes").upsert(classes.map(classToRow))
+      .then(({ error }) => { if (error) toast.error("Failed to save classes to database.") })
     if (payload.lessons)  supabase.from("lessons").upsert(lessons.map(lessonToRow))
+      .then(({ error }) => { if (error) toast.error("Failed to save lessons to database.") })
     if (payload.students) supabase.from("students").upsert(students.map(studentToRow))
+      .then(({ error }) => { if (error) toast.error("Failed to save students to database.") })
     replaceAllEvents(withEvts.events).catch(() => {})
     return counts
   }, [setData])
@@ -587,7 +593,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     const withEvts = { ...next, events: generateSchedule(next) }
     setData(withEvts)
     supabase.from("classes").upsert(classes.map(classToRow))
+      .then(({ error }) => { if (error) toast.error("Failed to save classes to database.") })
     supabase.from("lessons").upsert(lessons.map(lessonToRow))
+      .then(({ error }) => { if (error) toast.error("Failed to save lessons to database.") })
     replaceAllEvents(withEvts.events).catch(() => {})
   }, [setData])
 
