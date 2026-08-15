@@ -298,10 +298,11 @@ function MeetingCard({ meeting, todos }: { meeting: Meeting; todos: Todo[] }) {
           </div>
 
           <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="size-8 shrink-0" aria-label="Meeting actions">
-                <MoreHorizontal className="size-4" aria-hidden="true" />
-              </Button>
+            <DropdownMenuTrigger
+              aria-label="Meeting actions"
+              className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <MoreHorizontal className="size-4" aria-hidden="true" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem onClick={() => setFormOpen(true)}>

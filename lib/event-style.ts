@@ -1,5 +1,5 @@
 import type { CalendarEventType } from "./types"
-import { BookOpen, Cake, HandHeart, Megaphone, type LucideIcon } from "lucide-react"
+import { BookOpen, Cake, HandHeart, ListTodo, Megaphone, type LucideIcon } from "lucide-react"
 
 interface EventMeta {
   label: string
@@ -38,6 +38,13 @@ export const EVENT_META: Record<CalendarEventType, EventMeta> = {
     dot: "bg-amber-500",
     chip: "bg-amber-500/10 text-amber-600 border-amber-500/20",
     badge: "bg-amber-500/10 text-amber-600",
+  },
+  task: {
+    label: "To-do",
+    icon: ListTodo,
+    dot: "bg-emerald-500",
+    chip: "bg-emerald-500/10 text-emerald-600 border-emerald-500/20",
+    badge: "bg-emerald-500/10 text-emerald-600",
   },
 }
 

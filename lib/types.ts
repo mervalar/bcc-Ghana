@@ -31,7 +31,7 @@ export interface Lesson {
   reference: string
 }
 
-export type CalendarEventType = "lesson" | "fellowship" | "crusade" | "birthday"
+export type CalendarEventType = "lesson" | "fellowship" | "crusade" | "birthday" | "task"
 
 export interface CalendarEvent {
   id: string
@@ -84,6 +84,21 @@ export interface Settings {
   promotions: Promotion[]
 }
 
+export interface StaffTeam {
+  id: string
+  name: string
+  description: string
+  order: number
+}
+
+export interface StaffMember {
+  id: string
+  teamId: string
+  name: string
+  /** Optional sub-title within the team, e.g. "Co-Head" */
+  role: string
+}
+
 export interface AppData {
   settings: Settings
   students: Student[]
@@ -92,6 +107,8 @@ export interface AppData {
   events: CalendarEvent[]
   meetings: Meeting[]
   todos: Todo[]
+  staffTeams: StaffTeam[]
+  staffMembers: StaffMember[]
 }
 
 /** Shape of an imported / exported JSON file */

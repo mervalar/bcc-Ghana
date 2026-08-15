@@ -255,7 +255,7 @@ export default function CalendarPage() {
 
           {/* Legend */}
           <div className="flex flex-wrap gap-4 px-1">
-            {(["lesson", "fellowship", "crusade", "birthday"] as const).map((type) => {
+            {(["lesson", "fellowship", "crusade", "birthday", "task"] as const).map((type) => {
               const meta = EVENT_META[type]
               return (
                 <div key={type} className="flex items-center gap-1.5">

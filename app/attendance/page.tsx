@@ -177,7 +177,7 @@ export default function AttendancePage() {
                 <CardTitle className="text-sm font-semibold">1. Select Promotion</CardTitle>
               </CardHeader>
               <CardContent className="pb-4">
-                <Select value={selectedPromoId} onValueChange={setSelectedPromoId}>
+                <Select value={selectedPromoId} onValueChange={(v) => setSelectedPromoId(v ?? "")}>
                   <SelectTrigger className="w-full">
                     <SelectValue placeholder="Choose promotion">{selectedPromoName}</SelectValue>
                   </SelectTrigger>
@@ -200,7 +200,7 @@ export default function AttendancePage() {
                 {lessons.length === 0 ? (
                   <p className="text-sm text-muted-foreground py-2">No lesson events scheduled.</p>
                 ) : (
-                  <Select value={selectedEventId} onValueChange={setSelectedEventId}>
+                  <Select value={selectedEventId} onValueChange={(v) => setSelectedEventId(v ?? "")}>
                     <SelectTrigger className="w-full">
                       <SelectValue placeholder="Choose lesson">{selectedEventName}</SelectValue>
                     </SelectTrigger>

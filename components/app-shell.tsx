@@ -11,11 +11,13 @@ import {
   BookOpen,
   CalendarDays,
   CheckSquare,
+  GraduationCap,
   LayoutDashboard,
   LogOut,
   Menu,
   NotebookPen,
   Settings,
+  UsersRound,
   Users,
   X,
 } from "lucide-react"
@@ -25,6 +27,8 @@ const NAV = [
   { href: "/calendar", label: "Calendar", icon: CalendarDays },
   { href: "/attendance", label: "Attendance", icon: CheckSquare },
   { href: "/students", label: "Students", icon: Users },
+  { href: "/lessons", label: "Lessons", icon: GraduationCap },
+  { href: "/staff", label: "Staff & Committee", icon: UsersRound },
   { href: "/meetings", label: "Minutes & Meetings", icon: NotebookPen },
   { href: "/settings", label: "Settings & Import", icon: Settings },
 ]

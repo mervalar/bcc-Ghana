@@ -111,6 +111,7 @@ export function parseCSV(text: string): StudentRow[] {
         birthday: normBirthday(get(col.birthday)),
         notes:    get(col.notes),
         classId:  get(col.classId) || null,
+        promotionId: null,
         status:   (get(col.status) || "active") as StudentRow["status"],
       } satisfies Omit<StudentRow, "id">
     })

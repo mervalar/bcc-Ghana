@@ -5,8 +5,10 @@ import type { CalendarEvent } from "@/lib/types"
 import { useStore } from "@/lib/store"
 import { EVENT_META, formatLongDate, MONTHS } from "@/lib/event-style"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
 import { toast } from "sonner"
-import { CalendarCheck, CalendarClock, X } from "lucide-react"
+import { CalendarCheck, CalendarClock, Plus, Trash2, X } from "lucide-react"
 import { fromISO } from "@/lib/scheduler"
 
 interface Props {
@@ -16,16 +18,38 @@ interface Props {
 }
 
 export function EventPanel({ date, events, onClose }: Props) {
-  const { markLessonDone, postponeLesson } = useStore()
+  const { markLessonDone, postponeLesson, addEvent, deleteEvent } = useStore()
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [addingTask, setAddingTask] = useState(false)
+  const [taskTitle, setTaskTitle] = useState("")
+  const [taskDescription, setTaskDescription] = useState("")
 
   const selected = events.find((e) => e.id === selectedId) ?? null
 
   useEffect(() => {
     setSelectedId(events.length ? events[0].id : null)
+    setAddingTask(false)
+    setTaskTitle("")
+    setTaskDescription("")
   }, [date, events])
 
   if (!date) return null
+
+  const submitTask = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    if (!taskTitle.trim()) return
+    addEvent(date, taskTitle.trim(), taskDescription.trim())
+    toast.success("Task added.")
+    setAddingTask(false)
+    setTaskTitle("")
+    setTaskDescription("")
+  }
+
+  const removeTask = (id: string) => {
+    deleteEvent(id)
+    toast.success("Task removed.")
+    if (selectedId === id) setSelectedId(null)
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -39,52 +63,100 @@ export function EventPanel({ date, events, onClose }: Props) {
         </Button>
       </div>
 
-      {events.length === 0 ? (
-        <div className="flex flex-1 items-center justify-center p-6 text-center text-sm text-muted-foreground">
-          Nothing scheduled on this day.
-        </div>
-      ) : (
-        <div className="flex flex-1 flex-col overflow-hidden">
-          {/* event chips */}
-          <div className="flex flex-wrap gap-2 border-b border-border p-4">
-            {events.map((e) => {
-              const meta = EVENT_META[e.type]
-              const Icon = meta.icon
-              const active = e.id === selectedId
-              return (
-                <button
-                  key={e.id}
-                  type="button"
-                  onClick={() => setSelectedId(e.id)}
-                  className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
-                    active ? meta.chip : "border-border bg-card text-muted-foreground hover:bg-muted"
-                  }`}
-                >
-                  <Icon className="size-3.5" aria-hidden="true" />
-                  {meta.label}
-                  {e.status === "done" && <span className="ml-0.5 text-emerald-600">✓</span>}
-                  {e.status === "postponed" && <span className="ml-0.5 text-amber-500">→</span>}
-                </button>
-              )
-            })}
+      <div className="flex flex-1 flex-col overflow-hidden">
+        {events.length === 0 && !addingTask ? (
+          <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+            <p className="text-sm text-muted-foreground">Nothing scheduled on this day.</p>
+            <Button size="sm" className="gap-2" onClick={() => setAddingTask(true)}>
+              <Plus className="size-4" aria-hidden="true" />
+              Add a task
+            </Button>
           </div>
+        ) : (
+          <>
+            {/* event chips */}
+            <div className="flex flex-wrap items-center gap-2 border-b border-border p-4">
+              {events.map((e) => {
+                const meta = EVENT_META[e.type]
+                const Icon = meta.icon
+                const active = e.id === selectedId && !addingTask
+                return (
+                  <button
+                    key={e.id}
+                    type="button"
+                    onClick={() => { setSelectedId(e.id); setAddingTask(false) }}
+                    className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                      active ? meta.chip : "border-border bg-card text-muted-foreground hover:bg-muted"
+                    }`}
+                  >
+                    <Icon className="size-3.5" aria-hidden="true" />
+                    {meta.label}
+                    {e.status === "done" && <span className="ml-0.5 text-emerald-600">✓</span>}
+                    {e.status === "postponed" && <span className="ml-0.5 text-amber-500">→</span>}
+                  </button>
+                )
+              })}
+              <button
+                type="button"
+                onClick={() => { setAddingTask(true); setSelectedId(null) }}
+                className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                  addingTask ? "border-primary/20 bg-primary/10 text-primary" : "border-dashed border-border text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                <Plus className="size-3.5" aria-hidden="true" />
+                Add task
+              </button>
+            </div>
 
-          {selected && (
-            <EventDetail
-              key={selected.id}
-              event={selected}
-              onDone={selected.type === "lesson" ? () => {
-                markLessonDone(selected.id)
-                toast.success("Lesson marked as done.")
-              } : undefined}
-              onPostpone={selected.type === "lesson" && selected.promotionId ? () => {
-                postponeLesson(selected.id)
-                toast.success("Lesson postponed — all following events shifted.")
-              } : undefined}
-            />
-          )}
-        </div>
-      )}
+            {addingTask ? (
+              <form onSubmit={submitTask} className="flex flex-1 flex-col gap-3 overflow-y-auto p-5">
+                <div className="flex flex-col gap-2">
+                  <label htmlFor="taskTitle" className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    What to do
+                  </label>
+                  <Input
+                    id="taskTitle"
+                    value={taskTitle}
+                    onChange={(e) => setTaskTitle(e.target.value)}
+                    placeholder="e.g. Call the venue"
+                    autoFocus
+                    required
+                  />
+                </div>
+                <div className="flex flex-col gap-2">
+                  <label htmlFor="taskDescription" className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    Notes (optional)
+                  </label>
+                  <Textarea
+                    id="taskDescription"
+                    value={taskDescription}
+                    onChange={(e) => setTaskDescription(e.target.value)}
+                    rows={3}
+                  />
+                </div>
+                <div className="mt-auto flex gap-2 pt-2">
+                  <Button type="button" variant="outline" onClick={() => setAddingTask(false)}>Cancel</Button>
+                  <Button type="submit">Add task</Button>
+                </div>
+              </form>
+            ) : selected && (
+              <EventDetail
+                key={selected.id}
+                event={selected}
+                onDone={selected.type === "lesson" ? () => {
+                  markLessonDone(selected.id)
+                  toast.success("Lesson marked as done.")
+                } : undefined}
+                onPostpone={selected.type === "lesson" && selected.promotionId ? () => {
+                  postponeLesson(selected.id)
+                  toast.success("Lesson postponed — all following events shifted.")
+                } : undefined}
+                onDelete={selected.type === "task" ? () => removeTask(selected.id) : undefined}
+              />
+            )}
+          </>
+        )}
+      </div>
     </div>
   )
 }
@@ -93,10 +165,12 @@ function EventDetail({
   event,
   onDone,
   onPostpone,
+  onDelete,
 }: {
   event: CalendarEvent
   onDone?: () => void
   onPostpone?: () => void
+  onDelete?: () => void
 }) {
   const isDone      = event.status === "done"
   const isPostponed = event.status === "postponed"
@@ -132,8 +206,8 @@ function EventDetail({
         )}
       </div>
 
-      {/* Action buttons — lessons only, pinned to bottom */}
-      {(onDone || onPostpone) && (
+      {/* Action buttons — pinned to bottom */}
+      {(onDone || onPostpone || onDelete) && (
         <div className="flex gap-2 border-t border-border px-5 py-4">
           {onDone && (
             <Button
@@ -157,6 +231,17 @@ function EventDetail({
             >
               <CalendarClock className="size-3.5" aria-hidden="true" />
               Postpone
+            </Button>
+          )}
+          {onDelete && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5 border-destructive/20 text-destructive hover:bg-destructive/10"
+              onClick={onDelete}
+            >
+              <Trash2 className="size-3.5" aria-hidden="true" />
+              Delete
             </Button>
           )}
         </div>

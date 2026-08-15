@@ -185,6 +185,10 @@ export function generateSchedule(data: AppData): CalendarEvent[] {
     }
   }
 
+  // Free-form tasks/notes aren't algorithmically generated — carry them over unchanged
+  // so they survive regeneration triggered by student/class/lesson edits elsewhere.
+  allEvents.push(...data.events.filter((e) => e.type === "task"))
+
   return allEvents
 }
 
@@ -205,7 +209,7 @@ function mergeEdit(base: CalendarEvent, editedMap: Map<string, CalendarEvent>): 
 }
 
 export function eventsForDate(events: CalendarEvent[], iso: string): CalendarEvent[] {
-  const order: Record<string, number> = { lesson: 0, crusade: 1, fellowship: 2, birthday: 3 }
+  const order: Record<string, number> = { lesson: 0, crusade: 1, fellowship: 2, birthday: 3, task: 4 }
   return events
     .filter((e) => e.date === iso)
     .sort((a, b) => (order[a.type] ?? 9) - (order[b.type] ?? 9))
@@ -213,7 +217,7 @@ export function eventsForDate(events: CalendarEvent[], iso: string): CalendarEve
 
 /** Helper used by dashboard stats */
 export function summarize(events: CalendarEvent[]) {
-  const counts = { lesson: 0, fellowship: 0, crusade: 0, birthday: 0 }
+  const counts = { lesson: 0, fellowship: 0, crusade: 0, birthday: 0, task: 0 }
   for (const e of events) counts[e.type]++
   return counts
 }

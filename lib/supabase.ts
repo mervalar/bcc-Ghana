@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js"
-import type { BibleClass, CalendarEvent, Lesson, Meeting, Promotion, Student, Todo } from "./types"
+import type { BibleClass, CalendarEvent, Lesson, Meeting, Promotion, StaffMember, StaffTeam, Student, Todo } from "./types"
 
 export const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -175,6 +175,43 @@ export function todoToRow(t: Todo) {
     created_at: t.createdAt || null,
     meeting_id: t.meetingId || null,
   }
+}
+
+/* ── Staff teams & members ── */
+
+export function rowToStaffTeam(r: Record<string, unknown>): StaffTeam {
+  return {
+    id:          r.id as string,
+    name:        r.name as string,
+    description: (r.description as string) ?? "",
+    order:       r.order as number,
+  }
+}
+export function staffTeamToRow(t: StaffTeam) {
+  return { id: t.id, name: t.name, description: t.description || null, order: t.order }
+}
+
+export function rowToStaffMember(r: Record<string, unknown>): StaffMember {
+  return {
+    id:     r.id as string,
+    teamId: r.team_id as string,
+    name:   r.name as string,
+    role:   (r.role as string) ?? "",
+  }
+}
+export function staffMemberToRow(m: StaffMember) {
+  return { id: m.id, team_id: m.teamId, name: m.name, role: m.role || null }
+}
+
+/* ── App credentials ── */
+
+export interface AppCredentialsRow {
+  username: string
+  password: string
+}
+
+export function rowToCredentials(r: Record<string, unknown>): AppCredentialsRow {
+  return { username: r.username as string, password: r.password as string }
 }
 
 /* ── Batch helpers ── */

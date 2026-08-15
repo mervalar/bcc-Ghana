@@ -1,6 +1,8 @@
 "use client"
 
 import { createContext, useContext, useEffect, useState } from "react"
+import { supabase, rowToCredentials } from "./supabase"
+import { toast } from "sonner"
 
 interface Credentials {
   username: string
@@ -16,8 +18,9 @@ interface AuthContextValue {
   changeCredentials: (creds: Credentials) => void
 }
 
-const CREDS_KEY = "bsm:creds"
+const LEGACY_CREDS_KEY = "bsm:creds"
 const SESSION_KEY = "bsm:session"
+const CREDS_ROW_ID = "admin"
 const DEFAULT_CREDS: Credentials = {
   username: process.env.NEXT_PUBLIC_ADMIN_USERNAME ?? "",
   password: process.env.NEXT_PUBLIC_ADMIN_PASSWORD ?? "",
@@ -31,15 +34,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false)
 
   useEffect(() => {
-    try {
-      const storedCreds = localStorage.getItem(CREDS_KEY)
-      if (storedCreds) setCreds(JSON.parse(storedCreds))
-      const session = localStorage.getItem(SESSION_KEY)
-      if (session === "1") setAuthed(true)
-    } catch {
-      // ignore
+    async function load() {
+      try {
+        const { data } = await supabase.from("app_credentials").select("*").eq("id", CREDS_ROW_ID).maybeSingle()
+        if (data) {
+          setCreds(rowToCredentials(data))
+        } else {
+          // No row yet — migrate any credentials this browser previously stored locally
+          // so the device that has the "real" current password becomes the shared source.
+          let legacy: Credentials | null = null
+          try {
+            const stored = localStorage.getItem(LEGACY_CREDS_KEY)
+            if (stored) legacy = JSON.parse(stored)
+          } catch {
+            // ignore
+          }
+          const initial = legacy ?? DEFAULT_CREDS
+          setCreds(initial)
+          const { error } = await supabase.from("app_credentials").upsert({ id: CREDS_ROW_ID, ...initial })
+          if (!error && legacy) {
+            try { localStorage.removeItem(LEGACY_CREDS_KEY) } catch { /* ignore */ }
+          }
+        }
+      } catch {
+        // Supabase unreachable / table not migrated yet — fall back to the env default
+      }
+      try {
+        const session = localStorage.getItem(SESSION_KEY)
+        if (session === "1") setAuthed(true)
+      } catch {
+        // ignore
+      }
+      setReady(true)
     }
-    setReady(true)
+    load()
   }, [])
 
   const login = (username: string, password: string) => {
@@ -66,11 +94,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const changeCredentials = (next: Credentials) => {
     setCreds(next)
-    try {
-      localStorage.setItem(CREDS_KEY, JSON.stringify(next))
-    } catch {
-      // ignore
-    }
+    supabase.from("app_credentials").upsert({ id: CREDS_ROW_ID, ...next })
+      .then(({ error }) => {
+        if (error) toast.error("Failed to sync credentials to the database — other devices won't see this change until the app_credentials table exists in Supabase.")
+      })
   }
 
   return (

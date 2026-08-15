@@ -1,4 +1,4 @@
-import type { AppData, BibleClass, Lesson, Student } from "./types"
+import type { AppData, BibleClass, Lesson, StaffMember, StaffTeam, Student } from "./types"
 import { generateSchedule } from "./scheduler"
 
 /* ── CLASSES ──────────────────────────────────────────────────────────────── */
@@ -127,7 +127,7 @@ const baseLessons: Lesson[] = [
 /* ── STUDENTS (60 unique — parsed from the BCC Ghana registration form) ────── */
 /* Birthdays: yyyy-mm-dd. Year=2000 used when only month/day was given on form. */
 
-const baseStudents: Student[] = [
+const baseStudents: Array<Omit<Student, "promotionId">> = [
   { id: "st-001", firstName: "Merveille",        lastName: "Arikungoma",         email: "",                                        phone: "",               birthday: "2000-06-22", classId: null, status: "active", notes: "France" },
   { id: "st-002", firstName: "Etienne",           lastName: "Mwumvaneza",         email: "mwumvaneza.ETIENNE@um6p.ma",              phone: "+212620443501",  birthday: "2000-07-17", classId: null, status: "active", notes: "Morocco" },
   { id: "st-003", firstName: "Ange Noella",       lastName: "Uwijuru",            email: "angenoella78@gmail.com",                  phone: "0465496657",     birthday: "2001-12-24", classId: null, status: "active", notes: "Belgium (Bruxelles)" },
@@ -190,11 +190,46 @@ const baseStudents: Student[] = [
   { id: "st-060", firstName: "Lydia",             lastName: "Masasu",             email: "umulisalydiam@gmail.com",                 phone: "0727996959",     birthday: "2000-11-08", classId: null, status: "active", notes: "Rwanda" },
 ]
 
+/* ── STAFF & COMMITTEE (placeholder names — replace with the real roster) ─── */
+
+const baseStaffTeams: StaffTeam[] = [
+  { id: "team-head",      name: "Head of Promotion", order: 1, description: "Oversees the entire promotion and coordinates all other teams." },
+  { id: "team-teachers",  name: "Teachers",           order: 2, description: "Prepare and deliver the weekly Bible class lessons." },
+  { id: "team-facilit",   name: "Facilitators",       order: 3, description: "Guide small-group discussion and follow-up after each lesson." },
+  { id: "team-intercess", name: "Intercession",       order: 4, description: "Lead prayer support for the promotion and its leadership." },
+  { id: "team-social",    name: "Social",             order: 5, description: "Organize fellowship gatherings, events, and outings." },
+  { id: "team-advisers",  name: "Advisers",           order: 6, description: "Provide guidance and spiritual oversight to the leadership team." },
+  { id: "team-support",   name: "Support System",     order: 7, description: "Handle logistics, technical setup, and administrative support." },
+]
+
+const baseStaffMembers: StaffMember[] = [
+  { id: "staff-01", teamId: "team-head",      name: "Jean-Baptiste Uwimana",      role: "Head" },
+  { id: "staff-02", teamId: "team-head",      name: "Marie-Claire Ingabire",      role: "Head" },
+  { id: "staff-03", teamId: "team-teachers",  name: "Emmanuel Nshimiyimana",      role: "" },
+  { id: "staff-04", teamId: "team-teachers",  name: "Grace Mukamana",             role: "" },
+  { id: "staff-05", teamId: "team-teachers",  name: "Patrick Habimana",           role: "" },
+  { id: "staff-06", teamId: "team-facilit",   name: "Diane Uwase",                role: "" },
+  { id: "staff-07", teamId: "team-facilit",   name: "Eric Ndayisenga",            role: "" },
+  { id: "staff-08", teamId: "team-intercess", name: "Esther Niyonsaba",           role: "" },
+  { id: "staff-09", teamId: "team-intercess", name: "Samuel Byiringiro",          role: "" },
+  { id: "staff-10", teamId: "team-social",    name: "Aline Umutoni",              role: "" },
+  { id: "staff-11", teamId: "team-social",    name: "David Kagabo",               role: "" },
+  { id: "staff-12", teamId: "team-advisers",  name: "Elie Nkurunziza",            role: "" },
+  { id: "staff-13", teamId: "team-advisers",  name: "Consolée Mukandayisenga",    role: "" },
+  { id: "staff-14", teamId: "team-support",   name: "Frank Munyaneza",            role: "" },
+  { id: "staff-15", teamId: "team-support",   name: "Joyce Iradukunda",           role: "" },
+]
+
 /* ── BUILDER ──────────────────────────────────────────────────────────────── */
 
 /** Returns only the 9 classes + 83 lessons — used to seed structure without touching students or promotions. */
 export function getClassTemplate(): { classes: typeof baseClasses; lessons: typeof baseLessons } {
   return { classes: baseClasses, lessons: baseLessons }
+}
+
+/** Returns the default staff teams + placeholder members — used to seed the Staff & Committee page. */
+export function getStaffTemplate(): { teams: typeof baseStaffTeams; members: typeof baseStaffMembers } {
+  return { teams: baseStaffTeams, members: baseStaffMembers }
 }
 
 export function buildSeed(): AppData {
@@ -206,6 +241,8 @@ export function buildSeed(): AppData {
     events: [],
     meetings: [],
     todos: [],
+    staffTeams: [],
+    staffMembers: [],
   }
   data.events = generateSchedule(data)
   return data

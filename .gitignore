@@ -9,6 +9,9 @@ __v0_jsx-dev-runtime.ts
 # Environment variables
 .env*.local
 
+# Local Supabase backups (contain student PII)
+backups/
+
 # Common ignores
 node_modules
 .next/

@@ -1,9 +1,9 @@
 "use client"
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react"
-import type { AppData, BibleClass, CalendarEvent, ImportPayload, Lesson, Meeting, Promotion, Student, Todo } from "./types"
+import type { AppData, BibleClass, CalendarEvent, ImportPayload, Lesson, Meeting, Promotion, StaffMember, StaffTeam, Student, Todo } from "./types"
 import { generateSchedule, nextLessonDay } from "./scheduler"
-import { getClassTemplate } from "./seed"
+import { getClassTemplate, getStaffTemplate } from "./seed"
 import { toast } from "sonner"
 import {
   supabase,
@@ -14,6 +14,8 @@ import {
   rowToEvent,     eventToRow,
   rowToMeeting,   meetingToRow,
   rowToTodo,      todoToRow,
+  rowToStaffTeam,   staffTeamToRow,
+  rowToStaffMember, staffMemberToRow,
   upsertEvents, replacePromoEvents, replaceAllEvents,
 } from "./supabase"
 
@@ -22,7 +24,7 @@ function uid(prefix: string): string {
 }
 
 function emptyData(): AppData {
-  return { settings: { promotions: [] }, students: [], classes: [], lessons: [], events: [], meetings: [], todos: [] }
+  return { settings: { promotions: [] }, students: [], classes: [], lessons: [], events: [], meetings: [], todos: [], staffTeams: [], staffMembers: [] }
 }
 
 interface StoreValue {
@@ -35,7 +37,18 @@ interface StoreValue {
   addStudent: (s: Omit<Student, "id">) => void
   updateStudent: (id: string, s: Partial<Student>) => void
   deleteStudent: (id: string) => void
+  updateClass: (id: string, patch: Partial<BibleClass>) => void
+  updateLesson: (id: string, patch: Partial<Lesson>) => void
+  deleteLesson: (id: string) => void
+  addTeam: (t: Omit<StaffTeam, "id" | "order">) => void
+  updateTeam: (id: string, patch: Partial<StaffTeam>) => void
+  deleteTeam: (id: string) => void
+  addMember: (m: Omit<StaffMember, "id">) => void
+  updateMember: (id: string, patch: Partial<StaffMember>) => void
+  deleteMember: (id: string) => void
   updateEvent: (id: string, next: Partial<CalendarEvent>) => void
+  addEvent: (date: string, title: string, description: string) => void
+  deleteEvent: (id: string) => void
   addMeeting: (m: Omit<Meeting, "id" | "createdAt">) => string
   updateMeeting: (id: string, next: Partial<Meeting>) => void
   deleteMeeting: (id: string) => void
@@ -53,6 +66,7 @@ interface StoreValue {
   exportData: () => AppData
   loadSeed: () => void
   loadClassTemplate: () => void
+  loadStaffTemplate: () => void
   resetAll: () => void
 }
 
@@ -74,7 +88,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     async function loadAll() {
       try {
-        const [promos, students, classes, lessons, events, meetings, todos] = await Promise.all([
+        const [promos, students, classes, lessons, events, meetings, todos, staffTeams, staffMembers] = await Promise.all([
           supabase.from("promotions").select("*"),
           supabase.from("students").select("*"),
           supabase.from("classes").select("*").order("order"),
@@ -82,6 +96,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           supabase.from("events").select("*"),
           supabase.from("meetings").select("*").order("created_at", { ascending: false }),
           supabase.from("todos").select("*"),
+          supabase.from("staff_teams").select("*").order("order"),
+          supabase.from("staff_members").select("*"),
         ])
 
         setData({
@@ -92,6 +108,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           events:                (events.data    ?? []).map(rowToEvent),
           meetings:              (meetings.data  ?? []).map(rowToMeeting),
           todos:                 (todos.data     ?? []).map(rowToTodo),
+          staffTeams:            (staffTeams.data  ?? []).map(rowToStaffTeam),
+          staffMembers:          (staffMembers.data ?? []).map(rowToStaffMember),
         })
       } catch {
         toast.error("Could not load data from database.")
@@ -117,7 +135,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       ? upsertEvents(promoEvts).catch(() => toast.error("Failed to sync events."))
       : Promise.resolve()
 
-    return supabase.from("promotions").insert(promotionToRow(promotion))
+    return Promise.resolve(supabase.from("promotions").insert(promotionToRow(promotion)))
       .then(({ error }) => {
         if (error) {
           toast.error("Failed to save promotion.")
@@ -216,6 +234,108 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       .then(({ error }) => { if (error) toast.error("Failed to delete student in database: " + error.message) })
   }, [setData])
 
+  /* ── Classes & Lessons ── */
+
+  const updateClass = useCallback((id: string, patch: Partial<BibleClass>) => {
+    const prev     = dataRef.current
+    const classes  = prev.classes.map((c) => (c.id === id ? { ...c, ...patch } : c))
+    const next     = { ...prev, classes }
+    const withEvts = { ...next, events: generateSchedule(next) }
+    setData(withEvts)
+
+    const updated = classes.find((c) => c.id === id)!
+    supabase.from("classes").update(classToRow(updated)).eq("id", id)
+      .then(({ error }) => { if (error) toast.error("Failed to update class.") })
+    replaceAllEvents(withEvts.events).catch(() => toast.error("Failed to sync events."))
+  }, [setData])
+
+  const updateLesson = useCallback((id: string, patch: Partial<Lesson>) => {
+    const prev     = dataRef.current
+    const lessons  = prev.lessons.map((l) => (l.id === id ? { ...l, ...patch } : l))
+    const next     = { ...prev, lessons }
+    const withEvts = { ...next, events: generateSchedule(next) }
+    setData(withEvts)
+
+    const updated = lessons.find((l) => l.id === id)!
+    supabase.from("lessons").update(lessonToRow(updated)).eq("id", id)
+      .then(({ error }) => { if (error) toast.error("Failed to update lesson.") })
+    replaceAllEvents(withEvts.events).catch(() => toast.error("Failed to sync events."))
+  }, [setData])
+
+  const deleteLesson = useCallback((id: string) => {
+    const prev     = dataRef.current
+    const lessons  = prev.lessons.filter((l) => l.id !== id)
+    const next     = { ...prev, lessons }
+    const withEvts = { ...next, events: generateSchedule(next) }
+    setData(withEvts)
+
+    supabase.from("lessons").delete().eq("id", id)
+      .then(({ error }) => { if (error) toast.error("Failed to delete lesson in database: " + error.message) })
+    replaceAllEvents(withEvts.events).catch(() => toast.error("Failed to sync events."))
+  }, [setData])
+
+  /* ── Staff teams & members ── */
+
+  const addTeam = useCallback((t: Omit<StaffTeam, "id" | "order">) => {
+    const prev  = dataRef.current
+    const order = prev.staffTeams.length ? Math.max(...prev.staffTeams.map((x) => x.order)) + 1 : 1
+    const team  = { ...t, id: uid("team"), order } as StaffTeam
+    setData({ ...prev, staffTeams: [...prev.staffTeams, team] })
+
+    supabase.from("staff_teams").insert(staffTeamToRow(team))
+      .then(({ error }) => { if (error) toast.error("Failed to save team.") })
+  }, [setData])
+
+  const updateTeam = useCallback((id: string, patch: Partial<StaffTeam>) => {
+    const prev  = dataRef.current
+    const teams = prev.staffTeams.map((t) => (t.id === id ? { ...t, ...patch } : t))
+    setData({ ...prev, staffTeams: teams })
+
+    const updated = teams.find((t) => t.id === id)!
+    supabase.from("staff_teams").update(staffTeamToRow(updated)).eq("id", id)
+      .then(({ error }) => { if (error) toast.error("Failed to update team.") })
+  }, [setData])
+
+  const deleteTeam = useCallback((id: string) => {
+    const prev = dataRef.current
+    setData({
+      ...prev,
+      staffTeams:   prev.staffTeams.filter((t) => t.id !== id),
+      staffMembers: prev.staffMembers.filter((m) => m.teamId !== id),
+    })
+
+    supabase.from("staff_members").delete().eq("team_id", id)
+      .then(() => supabase.from("staff_teams").delete().eq("id", id))
+      .then(({ error }) => { if (error) toast.error("Failed to delete team in database: " + error.message) })
+  }, [setData])
+
+  const addMember = useCallback((m: Omit<StaffMember, "id">) => {
+    const member = { ...m, id: uid("staff") } as StaffMember
+    const prev   = dataRef.current
+    setData({ ...prev, staffMembers: [...prev.staffMembers, member] })
+
+    supabase.from("staff_members").insert(staffMemberToRow(member))
+      .then(({ error }) => { if (error) toast.error("Failed to save team member.") })
+  }, [setData])
+
+  const updateMember = useCallback((id: string, patch: Partial<StaffMember>) => {
+    const prev    = dataRef.current
+    const members = prev.staffMembers.map((m) => (m.id === id ? { ...m, ...patch } : m))
+    setData({ ...prev, staffMembers: members })
+
+    const updated = members.find((m) => m.id === id)!
+    supabase.from("staff_members").update(staffMemberToRow(updated)).eq("id", id)
+      .then(({ error }) => { if (error) toast.error("Failed to update team member.") })
+  }, [setData])
+
+  const deleteMember = useCallback((id: string) => {
+    const prev = dataRef.current
+    setData({ ...prev, staffMembers: prev.staffMembers.filter((m) => m.id !== id) })
+
+    supabase.from("staff_members").delete().eq("id", id)
+      .then(({ error }) => { if (error) toast.error("Failed to delete team member in database: " + error.message) })
+  }, [setData])
+
   /* ── Events ── */
 
   const updateEvent = useCallback((id: string, patch: Partial<CalendarEvent>) => {
@@ -225,6 +345,21 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     const updated = events.find((e) => e.id === id)
     if (updated) supabase.from("events").upsert(eventToRow(updated))
       .then(({ error }) => { if (error) toast.error("Failed to update event.") })
+  }, [setData])
+
+  const addEvent = useCallback((date: string, title: string, description: string) => {
+    const event: CalendarEvent = { id: uid("task"), date, type: "task", title, description, edited: true }
+    const prev = dataRef.current
+    setData({ ...prev, events: [...prev.events, event] })
+    supabase.from("events").insert(eventToRow(event))
+      .then(({ error }) => { if (error) toast.error("Failed to save task.") })
+  }, [setData])
+
+  const deleteEvent = useCallback((id: string) => {
+    const prev = dataRef.current
+    setData({ ...prev, events: prev.events.filter((e) => e.id !== id) })
+    supabase.from("events").delete().eq("id", id)
+      .then(({ error }) => { if (error) toast.error("Failed to delete task in database: " + error.message) })
   }, [setData])
 
   const markLessonDone = useCallback((id: string) => {
@@ -426,7 +561,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     const withEvts = { ...next, events: generateSchedule(next) }
     setData(withEvts)
 
-    return supabase.from("students").upsert(newStudents.map(studentToRow))
+    return Promise.resolve(supabase.from("students").upsert(newStudents.map(studentToRow)))
       .then(({ error }) => {
         if (error) {
           toast.error("Failed to import students to database: " + error.message)
@@ -456,6 +591,16 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     replaceAllEvents(withEvts.events).catch(() => {})
   }, [setData])
 
+  const loadStaffTemplate = useCallback(() => {
+    const { teams, members } = getStaffTemplate()
+    const prev = dataRef.current
+    setData({ ...prev, staffTeams: teams, staffMembers: members })
+    supabase.from("staff_teams").upsert(teams.map(staffTeamToRow))
+      .then(({ error }) => { if (error) toast.error("Failed to save teams. Have you run the staff_teams SQL migration in Supabase?") })
+    supabase.from("staff_members").upsert(members.map(staffMemberToRow))
+      .then(({ error }) => { if (error) toast.error("Failed to save team members.") })
+  }, [setData])
+
   const resetAll = useCallback(() => {
     setData(emptyData())
     Promise.all([
@@ -466,6 +611,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       supabase.from("events").delete().not("id", "is", null),
       supabase.from("meetings").delete().not("id", "is", null),
       supabase.from("todos").delete().not("id", "is", null),
+      supabase.from("staff_members").delete().not("id", "is", null),
+      supabase.from("staff_teams").delete().not("id", "is", null),
     ]).catch(() => toast.error("Failed to clear database."))
   }, [setData])
 
@@ -474,19 +621,23 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       data, ready,
       addPromotion, updatePromotion, deletePromotion, regenerate,
       addStudent, updateStudent, deleteStudent,
-      updateEvent, repairFellowships, shiftEventsAfter, extendScheduleDay, markLessonDone, postponeLesson,
+      updateClass, updateLesson, deleteLesson,
+      addTeam, updateTeam, deleteTeam, addMember, updateMember, deleteMember,
+      updateEvent, addEvent, deleteEvent, repairFellowships, shiftEventsAfter, extendScheduleDay, markLessonDone, postponeLesson,
       addMeeting, updateMeeting, deleteMeeting,
       addTodo, toggleTodo, updateTodo, deleteTodo,
-      importData, importStudentsForPromotion, exportData, loadSeed, loadClassTemplate, resetAll,
+      importData, importStudentsForPromotion, exportData, loadSeed, loadClassTemplate, loadStaffTemplate, resetAll,
     }),
     [
       data, ready,
       addPromotion, updatePromotion, deletePromotion, regenerate,
       addStudent, updateStudent, deleteStudent,
-      updateEvent, repairFellowships, shiftEventsAfter, extendScheduleDay, markLessonDone, postponeLesson,
+      updateClass, updateLesson, deleteLesson,
+      addTeam, updateTeam, deleteTeam, addMember, updateMember, deleteMember,
+      updateEvent, addEvent, deleteEvent, repairFellowships, shiftEventsAfter, extendScheduleDay, markLessonDone, postponeLesson,
       addMeeting, updateMeeting, deleteMeeting,
       addTodo, toggleTodo, updateTodo, deleteTodo,
-      importData, importStudentsForPromotion, exportData, loadSeed, loadClassTemplate, resetAll,
+      importData, importStudentsForPromotion, exportData, loadSeed, loadClassTemplate, loadStaffTemplate, resetAll,
     ],
   )
 
